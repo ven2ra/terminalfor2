@@ -74,6 +74,8 @@ function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
         overflow: 'auto',
         minHeight,
         minWidth: 280,
+        maxWidth: '100%',
+        width: '100%',
         height: height || undefined,
         borderRadius: 'var(--r-card)',
       }}
@@ -133,11 +135,18 @@ export function DraggableStack({ order, onReorder, blocks, sizes = {}, defaultSi
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', gap, minHeight: '100%' }}
-      // A narrowed block (via the corner resize) leaves blank space beside it
-      // that isn't inside any block's own drop target — catch drops there
-      // too and just move the dragged block to the end of the list, instead
-      // of silently rejecting them.
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+        gridAutoRows: 'min-content',
+        alignItems: 'start',
+        gap,
+        minHeight: '100%',
+      }}
+      // Blank grid area (an empty cell, or space a narrowed block leaves
+      // beside it) isn't inside any block's own drop target — catch drops
+      // there too and just move the dragged block to the end, instead of
+      // silently rejecting them.
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
         e.preventDefault();
