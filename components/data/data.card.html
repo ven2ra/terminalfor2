@@ -1,0 +1,30 @@
+<!-- @dsCard group="Components" viewport="700x560" name="Data — asset cards, table, charts" subtitle="Coin marks, price values, sparklines, candles and the market ledger" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--bg-app);color:var(--text-primary);font:var(--type-body);padding:16px}.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.col{display:flex;flex-direction:column;gap:12px}.lbl{font:var(--type-eyebrow);letter-spacing:var(--ls-label);color:var(--text-faint)}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const {AssetCard,MarketTable,Sparkline,CandleChart,CoinMark,PriceValue,TickerStrip}=window.TerminalforDesignSystem_c51d59;
+const up=[3,5,4,6,5,8,7,9,8,11,9,12,14,11,15,13,17,15,19,22],down=[22,19,20,17,18,15,16,13,14,11,12,9,11,8,9,7,8,6,7,5];
+const ohlc=Array.from({length:44},(_,i)=>{const o=50+Math.sin(i/3)*12+Math.sin(i/7)*8,c=o+(i%3===0?6:-5)+Math.cos(i)*3;return{o,c,h:Math.max(o,c)+4,l:Math.min(o,c)-4};});
+const rows=[
+{symbol:'btc',name:'Bitcoin',price:'$102,646.00',deltas:[1.24,-0.61,-0.49],marketCap:'$2,090,152,416,300',volume:'$45,328,211,894',series:down},
+{symbol:'usdt',name:'Tether',price:'1.01',deltas:[0.16,1.28,-0.06],marketCap:'$93,584,210,001',volume:'$35,672,981,002',series:up},
+{symbol:'eth',name:'Ethereum',price:'$3,529.42',deltas:[2.65,-1.16,4.05],marketCap:'$422,138,947,333',volume:'$21,784,913,118',series:up},
+{symbol:'sol',name:'Solana',price:'$141.75',deltas:[-2.44,1.06,4.85],marketCap:'$62,386,574,112',volume:'$6,235,781,332',series:down}];
+function Demo(){return <div className="col" style={{gap:18}}>
+<TickerStrip items={[{symbol:'sol',price:'$176.34'},{symbol:'ltc',price:'$0.2329'},{symbol:'doge',price:'$0.22795'},{symbol:'matic',price:'$6.54'},{symbol:'uni',price:'$6.47'}]} style={{marginInline:-16}}/>
+<div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+<AssetCard symbol="btc" name="Bitcoin" pair="BTC/USDT" price={109687.6} delta={1.09} series={up}/>
+<AssetCard symbol="eth" name="Ethereum" pair="ETH/USDT" price={2687.63} delta={-2.01} series={down}/>
+<AssetCard symbol="sui" name="Sui" pair="SUI/USDT" price={178.24} delta={2.10} series={up}/></div>
+<div className="row" style={{gap:24}}>
+<div className="col" style={{gap:4}}><span className="lbl">Price value</span><PriceValue value="4,837.00" suffix="USD"/></div>
+<div className="col" style={{gap:4,flex:1}}><span className="lbl">Candles</span><CandleChart candles={ohlc} height={70}/></div>
+<div className="col" style={{gap:4,width:120}}><span className="lbl">Coin marks</span><div className="row" style={{gap:6}}>{['btc','eth','usdt','sol','doge','ltc'].map(s=><CoinMark key={s} symbol={s} size={22}/>)}</div></div></div>
+<MarketTable rows={rows}/>
+</div>;}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

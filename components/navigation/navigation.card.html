@@ -1,0 +1,23 @@
+<!-- @dsCard group="Components" viewport="700x600" name="Navigation — rail, topbar, promo" subtitle="App rail with grouped sections, topbar and promo strip" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--bg-app);color:var(--text-primary);font:var(--type-body);padding:16px}.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.col{display:flex;flex-direction:column;gap:12px}.lbl{font:var(--type-eyebrow);letter-spacing:var(--ls-label);color:var(--text-faint)}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const {SidebarNav,TopBar,PromoBanner}=window.TerminalforDesignSystem_c51d59;
+const groups=[
+{label:'Overview',items:[{id:'dashboard',label:'Dashboard',icon:'layout-grid'}]},
+{label:'Account',items:[{id:'portfolio',label:'Portfolio',icon:'candlestick-chart',dot:true},{id:'wallet',label:'Wallet',icon:'wallet'},{id:'watchlist',label:'Watchlist',icon:'star'}]},
+{label:'Activity',items:[{id:'trade',label:'Trade',icon:'repeat'},{id:'tx',label:'Transactions',icon:'arrow-left-right'}]},
+{label:'Others',items:[{id:'insights',label:'Insights',icon:'lightbulb'},{id:'analytics',label:'Analytics',icon:'bar-chart-3',badge:'Beta'},{id:'trends',label:'Market Trends',icon:'trending-up'},{id:'support',label:'Support',icon:'life-buoy',badge:'2'},{id:'settings',label:'Settings',icon:'settings'}]}];
+function Demo(){const[a,setA]=React.useState('dashboard');
+return <div style={{display:'flex',gap:16,height:560}}>
+<SidebarNav greeting={<>Welcome<br/>Back, Jason</>} meta="Last login 15 Jun 2025" groups={groups} active={a} onSelect={setA} style={{height:'100%',borderRadius:'var(--r-panel)',border:'1px solid var(--border-hairline)'}}/>
+<div className="col" style={{flex:1,gap:12}}>
+<TopBar crumbs={['Overview','Dashboard']} wallet="Your Wallet" address="0x00FD...FAB6" style={{borderRadius:'var(--r-lg)',border:'1px solid var(--border-hairline)'}}/>
+<PromoBanner countdown="16:09:46">Get 2.5% off fees for next</PromoBanner>
+</div></div>;}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

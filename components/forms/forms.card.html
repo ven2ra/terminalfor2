@@ -1,0 +1,20 @@
+<!-- @dsCard group="Components" viewport="700x260" name="Forms — inputs, filters, slider" subtitle="Search, dropdowns, segmented control, amount field, range" -->
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--bg-app);color:var(--text-primary);font:var(--type-body);padding:16px}.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.col{display:flex;flex-direction:column;gap:12px}.lbl{font:var(--type-eyebrow);letter-spacing:var(--ls-label);color:var(--text-faint)}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const {SearchInput,SelectMenu,SegmentedControl,FilterTabs,AmountField,RangeSlider,CoinMark}=window.TerminalforDesignSystem_c51d59;
+function Demo(){const[q,setQ]=React.useState('');const[cur,setCur]=React.useState('USDT');const[mode,setMode]=React.useState('Buy');const[tab,setTab]=React.useState('All');const[pct,setPct]=React.useState(62);
+return <div className="col" style={{gap:18,maxWidth:640}}>
+<div className="row"><SearchInput width={300} value={q} onChange={e=>setQ(e.target.value)}/><SelectMenu options={['USDT','USDC','ETH']} value={cur} onChange={setCur} leading={<CoinMark symbol={cur.toLowerCase()==='usdt'?'usdt':'eth'} size={16}/>}/><SelectMenu options={['Top Gainers','Top Losers']} value="Top Gainers"/><SelectMenu options={['24H','7D','30D']} value="7D"/></div>
+<FilterTabs options={['All','Trends','Favorites','Top Gainers','Top Losers']} value={tab} onChange={setTab}/>
+<div className="row" style={{alignItems:'flex-start',gap:16}}>
+<SegmentedControl options={['Buy','Sell','Swap']} value={mode} onChange={setMode} style={{width:280}}/>
+<div style={{flex:1,minWidth:280}}><RangeSlider value={pct} onChange={setPct}/></div></div>
+<AmountField label="Spend" value="90,020.9" currency={<SelectMenu options={['USDT','USDC']} value="USDT" leading={<CoinMark symbol="usdt" size={16}/>}/>} style={{maxWidth:420}}/>
+</div>;}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

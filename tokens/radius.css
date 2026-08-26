@@ -1,0 +1,5 @@
+:root{
+--r-xs:4px;--r-sm:6px;--r-md:10px;--r-lg:12px;--r-xl:16px;--r-2xl:20px;--r-pill:999px;--r-circle:50%;
+--r-card:var(--r-xl);--r-panel:var(--r-2xl);--r-control:var(--r-md);--r-chip:var(--r-pill);--r-icon-btn:var(--r-md);--r-nav-item:var(--r-md);
+--bw-hairline:1px;/* @kind other */--bw-accent-tick:3px;/* @kind other */
+}

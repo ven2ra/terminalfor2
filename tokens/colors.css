@@ -1,0 +1,24 @@
+:root{
+/* ---- base neutrals: near-black terminal shell ---- */
+--black:#000;--n-1000:#050608;--n-950:#07080b;--n-900:#0b0d10;--n-850:#0e1013;--n-800:#12151a;--n-750:#171a20;--n-700:#1d2027;--n-600:#2a2e37;--n-500:#3d424d;--n-400:#5b6070;--n-300:#8b90a0;--n-200:#b7bcc7;--n-100:#dfe2e9;--n-0:#fff;
+/* ---- brand violet: the single hero accent (CTA, slider, active glow) ---- */
+--violet-100:#e2defd;--violet-300:#a99cff;--violet-400:#8b7bff;--violet-500:#6b5cff;--violet-600:#5346e0;--violet-700:#3f34b4;--violet-900:#1b1836;
+/* ---- market semantics ---- */
+--up-300:#4ade80;--up-500:#22c55e;--up-700:#15803d;--down-300:#fb7185;--down-500:#ef4444;--down-700:#b91c1c;--warn-500:#f5b638;--info-500:#4a90e2;
+/* ---- asset brand colors (ticker dots, coin glyph rings) ---- */
+--coin-btc:#f7931a;--coin-eth:#627eea;--coin-usdt:#26a17b;--coin-sol:#4a90e2;--coin-doge:#e2b842;--coin-ltc:#e8483f;--coin-matic:#8247e5;--coin-uni:#ff007a;--coin-sui:#6fbcf0;
+/* ================= semantic aliases ================= */
+--bg-app:var(--n-1000);--bg-rail:var(--n-950);--surface-panel:var(--n-900);--surface-card:var(--n-850);--surface-inset:var(--n-800);--surface-raised:var(--n-750);--surface-hover:rgba(255,255,255,.045);--surface-active:rgba(255,255,255,.075);
+--text-primary:#f4f5f7;--text-body:var(--n-200);--text-muted:var(--n-300);--text-faint:var(--n-400);--text-inverse:var(--n-1000);--text-accent:var(--violet-300);
+--border-hairline:rgba(255,255,255,.06);--border-subtle:rgba(255,255,255,.09);--border-strong:rgba(255,255,255,.14);--border-accent:rgba(107,92,255,.55);
+--accent:var(--violet-500);--accent-hover:var(--violet-400);--accent-press:var(--violet-600);--accent-soft:rgba(107,92,255,.14);--accent-ring:rgba(107,92,255,.35);
+--positive:var(--up-300);--positive-soft:rgba(34,197,94,.13);--negative:var(--down-300);--negative-soft:rgba(239,68,68,.13);--neutral-soft:rgba(255,255,255,.06);
+--chart-up:var(--up-500);--chart-down:var(--down-500);--chart-line:var(--violet-300);--chart-grid:rgba(255,255,255,.05);
+--focus-ring:var(--accent-ring);
+--gradient-cta:linear-gradient(90deg,#241f4d 0%,#3b3184 48%,#241f4d 100%);/* @kind color */
+--gradient-nav-active:linear-gradient(90deg,rgba(255,255,255,.10) 0%,rgba(255,255,255,.02) 100%);/* @kind color */
+--gradient-promo:linear-gradient(90deg,rgba(120,20,60,.35) 0%,rgba(60,12,34,.15) 60%,rgba(10,10,14,0) 100%);/* @kind color */
+--glow-up:radial-gradient(120% 100% at 50% 100%,rgba(34,197,94,.22),transparent 70%);/* @kind color */
+--glow-down:radial-gradient(120% 100% at 50% 100%,rgba(239,68,68,.22),transparent 70%);/* @kind color */
+--glow-accent:radial-gradient(120% 100% at 50% 100%,rgba(107,92,255,.22),transparent 70%);/* @kind color */
+}
