@@ -210,6 +210,71 @@ function buildActivityFeed(info) {
   return items;
 }
 
+// Coupon and offer (put/call) schedule for a bond, straight from MOEX ISS's
+// own reference endpoint — no hand-entered data. `bondization.json` returns
+// the security's full history, so this filters down to only what's still
+// ahead of today and keeps a handful of the nearest of each. For a share
+// (or any instrument with no such schedule) both blocks come back empty —
+// that's the widget's empty state, not an error.
+const BOND_BLOCK_PAGE_SIZE = 20;
+
+// bondization.json pages each block at 20 rows, oldest first, same as
+// candles.json's own pagination quirk — a bond with a long enough history
+// (semiannual coupons over 10-20+ years) needs more than one page before its
+// upcoming (i.e. most recent) entries show up at all.
+async function fetchBondBlock(symbol, blockName) {
+  const all = [];
+  for (let page = 0; page < 20; page++) {
+    const url = `${ISS_BASE}/securities/${symbol}/bondization.json?iss.meta=off&iss.only=${blockName}&start=${page * BOND_BLOCK_PAGE_SIZE}`;
+    const json = await fetchJson(url);
+    const rows = json[blockName] ? rowsFromBlock(json[blockName]) : [];
+    all.push(...rows);
+    if (rows.length < BOND_BLOCK_PAGE_SIZE) break;
+  }
+  return all;
+}
+
+async function loadBondEvents(symbol) {
+  const [couponRows, offerRows] = await Promise.all([
+    fetchBondBlock(symbol, 'coupons'),
+    fetchBondBlock(symbol, 'offers'),
+  ]);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const coupons = couponRows
+    .filter(c => c.coupondate && c.coupondate >= today)
+    .sort((a, b) => a.coupondate.localeCompare(b.coupondate))
+    .slice(0, 6)
+    .map(c => ({
+      date: c.coupondate,
+      value: c.value != null ? Number(c.value) : null,
+      rate: c.valueprc != null ? Number(c.valueprc) : null,
+      faceUnit: c.faceunit || 'RUB',
+    }));
+
+  const offers = offerRows
+    .filter(o => o.offerdate && o.offerdate >= today)
+    .sort((a, b) => a.offerdate.localeCompare(b.offerdate))
+    .slice(0, 6)
+    .map(o => ({
+      date: o.offerdate,
+      type: o.offertype || 'Оферта',
+      price: o.price != null ? Number(o.price) : null,
+      faceUnit: o.faceunit || 'RUB',
+    }));
+
+  return { coupons, offers };
+}
+
+app.get('/api/bond-events/:symbol', async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    res.json(await loadBondEvents(symbol));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.get('/api/market-status', (req, res) => {
   res.json({ open: isMarketOpen() });
 });

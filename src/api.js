@@ -46,3 +46,9 @@ export async function fetchNews(symbol, market, board) {
   if (!res.ok) throw new Error(`news request failed: ${res.status}`);
   return res.json();
 }
+
+export async function fetchBondEvents(symbol) {
+  const res = await fetch(`/api/bond-events/${symbol}`);
+  if (!res.ok) throw new Error(`bond-events request failed: ${res.status}`);
+  return res.json();
+}

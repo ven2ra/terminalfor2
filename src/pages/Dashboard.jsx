@@ -15,7 +15,7 @@ import { AmountField } from '../../components/forms/AmountField.jsx';
 import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { SearchInput } from '../../components/forms/SearchInput.jsx';
 import { PriceChart } from '../PriceChart.jsx';
-import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook } from '../api.js';
+import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook, fetchBondEvents } from '../api.js';
 import { NAV_GROUPS } from '../nav.js';
 import { Icon } from '../../components/core/Icon.jsx';
 import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
@@ -29,9 +29,12 @@ const TIMEFRAMES = [
   { code: '1h', label: '1ч' }, { code: '4h', label: '4ч' }, { code: '1d', label: '1д' },
 ];
 
-const WORKSPACE_KEY = 'tf2_dash_workspace_v2';
-const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook'];
-const WIDGET_LABELS = { watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель', orderbook: 'Стакан заявок' };
+const WORKSPACE_KEY = 'tf2_dash_workspace_v3';
+const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook', 'bondEvents'];
+const WIDGET_LABELS = {
+  watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель',
+  orderbook: 'Стакан заявок', bondEvents: 'Оферты и купоны',
+};
 // { xPct, y, wPct, h } — x/width as a % of the canvas, y/height in px.
 const DEFAULT_LAYOUT = {
   watchlist: { xPct: 0, y: 0, wPct: 21, h: 700 },
@@ -39,10 +42,20 @@ const DEFAULT_LAYOUT = {
   order: { xPct: 67, y: 0, wPct: 32, h: 460 },
   portfolio: { xPct: 22, y: 480, wPct: 44, h: 300 },
   orderbook: { xPct: 67, y: 480, wPct: 32, h: 420 },
+  bondEvents: { xPct: 22, y: 800, wPct: 44, h: 320 },
 };
 
 function fmtRub(n, opts) {
   return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(`${iso}T00:00:00Z`).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+  } catch {
+    return iso;
+  }
 }
 
 function mergeCandles(existing, incoming) {
@@ -88,8 +101,10 @@ export function Dashboard() {
   const [watchlist, setWatchlist] = React.useState([]);
   const [watchlistError, setWatchlistError] = React.useState(null);
   const [watchlistQuery, setWatchlistQuery] = React.useState('');
+  const [assetClass, setAssetClass] = React.useState('shares'); // 'shares' | 'bonds' — which market the instrument list shows
   const [active, setActive] = React.useState(null); // { symbol, market, board, name }
   const [extraQuotes, setExtraQuotes] = React.useState({});
+  const [bondEvents, setBondEvents] = React.useState({ coupons: [], offers: [] });
 
   const [info, setInfo] = React.useState(null);
   const [tf, setTf] = React.useState('1h');
@@ -137,7 +152,14 @@ export function Dashboard() {
   }, [watchlist, account.positions]);
 
   const getQuote = React.useCallback(symbol => watchlist.find(r => r.symbol === symbol) || extraQuotes[symbol] || null, [watchlist, extraQuotes]);
-  const activeQuote = active ? getQuote(active.symbol) : null;
+  // The instrument list only ever holds one asset class at a time (whichever
+  // the "Акции/Облигации" tab shows) — the active instrument can easily be
+  // the other one, or simply outside the top-30 the list is capped to. Fall
+  // back to the dedicated per-symbol fetch (`info`) so the price/name/delta
+  // shown everywhere doesn't just go blank in that case.
+  const activeQuote = active
+    ? getQuote(active.symbol) || (info && info.symbol === active.symbol ? info : null)
+    : null;
   const priceFlash = usePriceFlash(activeQuote?.priceRaw);
 
   const filteredWatchlist = React.useMemo(() => {
@@ -156,6 +178,7 @@ export function Dashboard() {
     setPrice('');
     setStopPrice('');
     setSubmitted(null);
+    setBondEvents({ coupons: [], offers: [] });
   }, [active?.symbol, active?.market, active?.board]);
 
   // Everything the visible UI shows a price for — the ticker, the
@@ -164,7 +187,7 @@ export function Dashboard() {
   // however long a per-widget poll interval happened to be offset by.
   const loadAll = React.useCallback(async () => {
     try {
-      const tasks = [fetchSecurities('shares')];
+      const tasks = [fetchSecurities(assetClass)];
       if (active) {
         tasks.push(
           fetchInstrument(active.symbol, active.market, active.board),
@@ -177,6 +200,15 @@ export function Dashboard() {
       setWatchlist(securities);
       setWatchlistError(null);
       setActive(prev => prev || (securities[0] ? { symbol: securities[0].symbol, market: securities[0].market, board: securities[0].board, name: securities[0].name } : null));
+
+      // The coupon/offer schedule only applies to bonds — skip the extra
+      // MOEX round-trip entirely for a share instead of fetching an always-
+      // empty result.
+      if (active?.market === 'bonds') {
+        fetchBondEvents(active.symbol)
+          .then(setBondEvents)
+          .catch(() => {});
+      }
 
       if (active) {
         setInfo(instrumentInfo);
@@ -204,7 +236,7 @@ export function Dashboard() {
     } catch (e) {
       setWatchlistError(e.message);
     }
-  }, [active?.symbol, active?.market, active?.board, tf]);
+  }, [active?.symbol, active?.market, active?.board, tf, assetClass]);
 
   // One fetch always runs (so a page opened outside trading hours still
   // shows the market's last real values instead of nothing) — but the
@@ -265,6 +297,11 @@ export function Dashboard() {
           size="sm"
           live={!watchlistError && marketOpen}
           eyebrow={watchlistError ? `Ошибка: ${watchlistError}` : marketOpen ? 'Топ по обороту' : 'Торги закрыты · последние цены сессии'}
+        />
+        <FilterTabs
+          options={['Акции', 'Облигации']}
+          value={assetClass === 'bonds' ? 'Облигации' : 'Акции'}
+          onChange={v => setAssetClass(v === 'Облигации' ? 'bonds' : 'shares')}
         />
         <SearchInput
           value={watchlistQuery}
@@ -497,7 +534,65 @@ export function Dashboard() {
     </Card>
   );
 
-  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard };
+  const isBond = active?.market === 'bonds';
+  const bondEventsCard = (
+    <Card style={{ height: '100%', overflow: 'auto' }}>
+      <SectionHeader
+        title="Оферты и купоны"
+        size="sm"
+        eyebrow={isBond ? 'MOEX ISS · график выплат' : 'Доступно для облигаций'}
+        style={{ paddingBottom: 'var(--sp-6)' }}
+      />
+      {!isBond ? (
+        <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>
+          {active ? 'Выбранный инструмент — не облигация' : 'Выберите облигацию слева'}
+        </span>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)', paddingBottom: 'var(--sp-3)' }}>Ближайшие купоны</div>
+            {bondEvents.coupons.length === 0 ? (
+              <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Нет данных о будущих купонах</span>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={bookTh}>Дата</th><th style={{ ...bookTh, textAlign: 'right' }}>Размер</th><th style={{ ...bookTh, textAlign: 'right' }}>Ставка</th></tr></thead>
+                <tbody>
+                  {bondEvents.coupons.map((c, i) => (
+                    <tr key={i}>
+                      <td style={{ ...bookTd, color: 'var(--text-body)' }}>{fmtDate(c.date)}</td>
+                      <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>{c.value != null ? `${fmtRub(c.value)} ${c.faceUnit}` : '—'}</td>
+                      <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-faint)' }}>{c.rate != null ? `${c.rate}%` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)', paddingBottom: 'var(--sp-3)' }}>Оферты</div>
+            {bondEvents.offers.length === 0 ? (
+              <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Оферты не предусмотрены</span>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={bookTh}>Дата</th><th style={bookTh}>Тип</th><th style={{ ...bookTh, textAlign: 'right' }}>Цена выкупа</th></tr></thead>
+                <tbody>
+                  {bondEvents.offers.map((o, i) => (
+                    <tr key={i}>
+                      <td style={{ ...bookTd, color: 'var(--text-body)' }}>{fmtDate(o.date)}</td>
+                      <td style={{ ...bookTd, color: 'var(--text-faint)' }}>{o.type}</td>
+                      <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>{o.price != null ? `${o.price}%` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+
+  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard };
 
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', background: 'var(--bg-app)' }}>
