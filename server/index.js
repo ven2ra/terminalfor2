@@ -140,7 +140,10 @@ function aggregateCandles(candles, groupSize) {
 }
 
 async function loadTrades(market, board, symbol) {
-  const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/trades.json?iss.meta=off`;
+  // Without `reversed=1` MOEX ISS pages from the START of the trading day —
+  // on an active ticker that's tens of thousands of trades behind "now", so
+  // the tape looked badly stale. Reversed order puts the newest trades first.
+  const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/trades.json?iss.meta=off&reversed=1`;
   const json = await fetchJson(url);
   return rowsFromBlock(json.trades)
     .sort((a, b) => b.TRADENO - a.TRADENO)

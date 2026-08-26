@@ -93,6 +93,7 @@ export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, hei
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
         e.preventDefault();
+        e.stopPropagation();
         onDrop(id);
       }}
       style={{ opacity: dragging ? 0.4 : 1, transition: 'opacity var(--dur-fast) var(--ease-standard)', ...style }}
@@ -121,24 +122,35 @@ export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, hei
 export function DraggableStack({ order, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)' }) {
   const [dragId, setDragId] = React.useState(null);
 
-  const onDrop = targetId => {
+  const moveBefore = targetId => {
     if (dragId == null || dragId === targetId) return setDragId(null);
     const next = order.filter(id => id !== dragId);
-    const idx = next.indexOf(targetId);
+    const idx = targetId == null ? next.length : next.indexOf(targetId);
     next.splice(idx, 0, dragId);
     onReorder(next);
     setDragId(null);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap }}>
+    <div
+      style={{ display: 'flex', flexDirection: 'column', gap, minHeight: '100%' }}
+      // A narrowed block (via the corner resize) leaves blank space beside it
+      // that isn't inside any block's own drop target — catch drops there
+      // too and just move the dragged block to the end of the list, instead
+      // of silently rejecting them.
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => {
+        e.preventDefault();
+        moveBefore(null);
+      }}
+    >
       {order.map(id => (
         <DraggableBlock
           key={id}
           id={id}
           dragId={dragId}
           onDragStart={setDragId}
-          onDrop={onDrop}
+          onDrop={moveBefore}
           onDragEnd={() => setDragId(null)}
           height={sizes[id] ?? defaultSizes[id]}
           onResize={onResize}
