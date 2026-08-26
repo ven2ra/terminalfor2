@@ -5,6 +5,7 @@ import { TickerStrip } from '../../components/data/TickerStrip.jsx';
 import { Card } from '../../components/core/Card.jsx';
 import { Button } from '../../components/core/Button.jsx';
 import { SectionHeader } from '../../components/core/SectionHeader.jsx';
+import { Badge } from '../../components/core/Badge.jsx';
 import { DeltaChip } from '../../components/core/DeltaChip.jsx';
 import { PriceValue } from '../../components/data/PriceValue.jsx';
 import { CoinMark } from '../../components/data/CoinMark.jsx';
@@ -20,6 +21,7 @@ import { Icon } from '../../components/core/Icon.jsx';
 import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
 import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
 import { useTheme, toggleTheme } from '../theme.js';
+import { useMarketOpen, marketScheduleLabel } from '../marketHours.js';
 
 const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
 const TIMEFRAMES = [
@@ -81,6 +83,7 @@ function usePriceFlash(value) {
 export function Dashboard() {
   const account = useDemoAccount();
   const theme = useTheme();
+  const marketOpen = useMarketOpen();
 
   const [watchlist, setWatchlist] = React.useState([]);
   const [watchlistError, setWatchlistError] = React.useState(null);
@@ -203,11 +206,17 @@ export function Dashboard() {
     }
   }, [active?.symbol, active?.market, active?.board, tf]);
 
+  // One fetch always runs (so a page opened outside trading hours still
+  // shows the market's last real values instead of nothing) — but the
+  // repeating poll only starts while the market is open. Closed, nothing
+  // refetches: quotes, the order book, and the chart just sit at whatever
+  // they last showed, with no further price-flash or volume movement.
   React.useEffect(() => {
     loadAll();
+    if (!marketOpen) return;
     const id = setInterval(loadAll, 2000);
     return () => clearInterval(id);
-  }, [loadAll]);
+  }, [loadAll, marketOpen]);
 
   const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: 'RUB' }));
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
@@ -254,8 +263,8 @@ export function Dashboard() {
         <SectionHeader
           title="Инструменты"
           size="sm"
-          live={!watchlistError}
-          eyebrow={watchlistError ? `Ошибка: ${watchlistError}` : 'Топ по обороту'}
+          live={!watchlistError && marketOpen}
+          eyebrow={watchlistError ? `Ошибка: ${watchlistError}` : marketOpen ? 'Топ по обороту' : 'Торги закрыты · последние цены сессии'}
         />
         <SearchInput
           value={watchlistQuery}
@@ -322,6 +331,7 @@ export function Dashboard() {
               <PriceValue value={activeQuote?.priceRaw} currency="" suffix="₽" size="lg" />
             </span>
             {activeQuote && <DeltaChip value={activeQuote.deltaRaw} showIcon />}
+            {!marketOpen && <Badge tone="neutral">Торги закрыты</Badge>}
           </div>
         </div>
         <FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TIMEFRAMES.find(t => t.code === tf)?.label} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />
@@ -438,8 +448,13 @@ export function Dashboard() {
       <SectionHeader
         title="Стакан заявок"
         size="sm"
-        live={book.source === 'tinvest'}
-        eyebrow={book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано · демо'}
+        live={marketOpen && book.source === 'tinvest'}
+        eyebrow={
+          !marketOpen
+            ? `Торги закрыты · сессия ${marketScheduleLabel()}`
+            : book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано · демо'
+        }
+        actions={!marketOpen && <Badge tone="neutral">Закрыто</Badge>}
         style={{ paddingBottom: 'var(--sp-5)' }}
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--sp-5)' }}>
@@ -504,6 +519,16 @@ export function Dashboard() {
             onToggleTheme={toggleTheme}
           />
           <TickerStrip items={ticker} />
+          {!marketOpen && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', padding: 'var(--sp-3) var(--sp-9)',
+              background: 'var(--neutral-soft)', borderBottom: '1px solid var(--border-hairline)',
+              font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
+            }}>
+              <Icon name="moon" size={12} />
+              Торги закрыты · биржа работает {marketScheduleLabel()} · котировки и стакан заморожены на последних значениях
+            </div>
+          )}
         </div>
         <main style={{ padding: 'var(--sp-7)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--sp-4)', paddingBottom: 'var(--sp-6)', position: 'relative' }}>

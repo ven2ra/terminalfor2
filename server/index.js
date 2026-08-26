@@ -1,5 +1,6 @@
 import express from 'express';
 import * as tinkoff from './tinkoff.js';
+import { isMarketOpen } from './marketHours.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -209,6 +210,10 @@ function buildActivityFeed(info) {
   return items;
 }
 
+app.get('/api/market-status', (req, res) => {
+  res.json({ open: isMarketOpen() });
+});
+
 app.get('/api/securities', async (req, res) => {
   const market = (req.query.market || 'shares').toString();
   const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
@@ -292,7 +297,12 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
         return res.json({ ...withValue(real), lotSize, source: 'tinvest' });
       }
     }
-    res.json({ ...withValue(simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000))), lotSize, source: 'simulated' });
+    // While the market's closed the book shouldn't visibly wiggle: drop the
+    // time component from the seed so repeated polls render the exact same
+    // simulated book instead of reshuffling every 2s regardless of whether
+    // anything is actually happening.
+    const seedKey = isMarketOpen() ? symbol + Math.floor(Date.now() / 2000) : `${symbol}_closed`;
+    res.json({ ...withValue(simulateOrderBook(info?.priceRaw, seedKey)), lotSize, source: 'simulated', marketOpen: isMarketOpen() });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
