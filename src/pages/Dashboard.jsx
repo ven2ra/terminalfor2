@@ -49,6 +49,13 @@ function fmtRub(n, opts) {
   return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
 }
 
+// Bonds quote as a percentage of face value on MOEX, never in currency —
+// every price/order-book/ticker display keys its unit off this instead of
+// hardcoding ₽, so a bond reads "%", and everything else keeps "₽".
+function priceUnit(market) {
+  return market === 'bonds' ? '%' : '₽';
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   try {
@@ -250,7 +257,7 @@ export function Dashboard() {
     return () => clearInterval(id);
   }, [loadAll, marketOpen]);
 
-  const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: 'RUB' }));
+  const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: priceUnit(r.market) }));
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
 
   const lotSize = info?.lotSize || 1;
@@ -317,7 +324,7 @@ export function Dashboard() {
             <tr>
               <th style={bookTh}>Инструмент</th>
               <th style={{ ...bookTh, textAlign: 'right' }}>Оборот</th>
-              <th style={{ ...bookTh, textAlign: 'right' }}>Цена</th>
+              <th style={{ ...bookTh, textAlign: 'right' }}>Цена, {priceUnit(assetClass)}</th>
               <th style={{ ...bookTh, textAlign: 'right' }}>Изм. %</th>
             </tr>
           </thead>
@@ -365,7 +372,7 @@ export function Dashboard() {
                 animation: priceFlash ? `${priceFlash.dir === 'up' ? 'tf2PriceFlashUp' : 'tf2PriceFlashDown'} 700ms ease-out` : 'none',
               }}
             >
-              <PriceValue value={activeQuote?.priceRaw} currency="" suffix="₽" size="lg" />
+              <PriceValue value={activeQuote?.priceRaw} currency="" suffix={priceUnit(active?.market)} size="lg" />
             </span>
             {activeQuote && <DeltaChip value={activeQuote.deltaRaw} showIcon />}
             {!marketOpen && <Badge tone="neutral">Торги закрыты</Badge>}
@@ -451,9 +458,9 @@ export function Dashboard() {
           <SegmentedControl options={['Купить', 'Продать']} value={side} onChange={setSide} />
           <SelectMenu options={ORDER_TYPES} value={orderType} onChange={setOrderType} />
           {!isMarket && (
-            <AmountField label={needsStop ? 'Цена исполнения, ₽' : 'Цена, ₽'} value={price} onChange={e => setPrice(e.target.value)} currency="₽" />
+            <AmountField label={needsStop ? `Цена исполнения, ${priceUnit(active.market)}` : `Цена, ${priceUnit(active.market)}`} value={price} onChange={e => setPrice(e.target.value)} currency={priceUnit(active.market)} />
           )}
-          {needsStop && <AmountField label="Стоп-цена, ₽" value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency="₽" />}
+          {needsStop && <AmountField label={`Стоп-цена, ${priceUnit(active.market)}`} value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency={priceUnit(active.market)} />}
           <AmountField label="Количество" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
           <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
             {[10, 25, 50, 100].map(pct => (
@@ -496,7 +503,7 @@ export function Dashboard() {
       />
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--sp-5)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={bookTh}>Покупка</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
+          <thead><tr><th style={bookTh}>Покупка, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.bids.map((r, i) => (
               <tr key={i} onClick={() => fillPriceFromBook(r.price)} style={{ cursor: 'pointer' }}
@@ -512,7 +519,7 @@ export function Dashboard() {
           </tbody>
         </table>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr><th style={bookTh}>Продажа</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
+          <thead><tr><th style={bookTh}>Продажа, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.asks.map((r, i) => (
               <tr key={i} onClick={() => fillPriceFromBook(r.price)} style={{ cursor: 'pointer' }}
