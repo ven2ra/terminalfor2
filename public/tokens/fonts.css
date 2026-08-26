@@ -1,0 +1,7 @@
+/* Terminalfor webfonts.
+   SUBSTITUTION NOTICE: no font binaries were supplied with the source material.
+   The screenshot's UI face is a geometric grotesque with a tall x-height and
+   tight spacing (Satoshi/General Sans family of shapes). Plus Jakarta Sans is the
+   closest Google Fonts match and is used as the core face. Numeric/ledger columns
+   use JetBrains Mono. Replace with the real binaries when available. */
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300..800;1,300..800&family=JetBrains+Mono:wght@400;500;600&display=swap");

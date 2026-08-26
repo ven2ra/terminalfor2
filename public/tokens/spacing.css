@@ -1,0 +1,7 @@
+:root{
+--sp-0:0px;--sp-1:2px;--sp-2:4px;--sp-3:6px;--sp-4:8px;--sp-5:10px;--sp-6:12px;--sp-7:14px;--sp-8:16px;--sp-9:20px;--sp-10:24px;--sp-11:28px;--sp-12:32px;--sp-14:40px;--sp-16:48px;--sp-20:64px;
+--gap-inline:8px;--gap-stack:12px;--gap-card:16px;--gap-section:24px;
+--pad-chip:4px 10px;/* @kind spacing */--pad-control:9px 14px;/* @kind spacing */--pad-card:16px;/* @kind spacing */--pad-panel:20px;/* @kind spacing */
+--rail-w:212px;--rail-w-collapsed:64px;--topbar-h:52px;--ticker-h:34px;--exchange-w:296px;
+--row-h:44px;--control-h:34px;--control-h-lg:42px;--icon-btn:32px;
+}

@@ -1,0 +1,11 @@
+:root{
+/* the shell is flat and matte: elevation reads through surface value + hairline, not drop shadow */
+--shadow-none:none;
+--shadow-card:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px rgba(0,0,0,.45);
+--shadow-panel:0 24px 60px rgba(0,0,0,.55);
+--shadow-popover:0 16px 40px rgba(0,0,0,.6);
+--shadow-inset-hairline:inset 0 0 0 1px rgba(255,255,255,.06);
+--shadow-cta-glow:0 0 0 1px rgba(107,92,255,.35),0 8px 28px rgba(83,70,224,.35);
+--shadow-focus:0 0 0 3px var(--focus-ring);
+--blur-overlay:blur(18px);/* @kind other */--blur-scrim:blur(6px);/* @kind other */
+}
