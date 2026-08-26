@@ -1,19 +1,26 @@
 import React from 'react';
 import { Icon } from '../components/core/Icon.jsx';
 
-/** Vertical stack of blocks the user can reorder by dragging; order persists to localStorage. */
-export function useBlockOrder(storageKey, defaultOrder) {
-  const [order, setOrder] = React.useState(() => {
+/** Rows of block ids (each row is a horizontal group) — lets a block be
+ * dropped either beside a neighbor (same row) or on a new row below/above
+ * it, depending on which edge of the target it's dropped on. Persists to
+ * localStorage. */
+export function useBlockRows(storageKey, defaultOrder) {
+  const [rows, setRows] = React.useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey));
-      if (Array.isArray(saved) && defaultOrder.every(id => saved.includes(id))) return saved;
+      const flat = Array.isArray(saved) ? saved.flat() : null;
+      if (flat && defaultOrder.every(id => flat.includes(id)) && flat.every(id => defaultOrder.includes(id))) {
+        // Migrate a legacy flat order (one block per row) transparently.
+        return Array.isArray(saved[0]) ? saved : saved.map(id => [id]);
+      }
     } catch {}
-    return defaultOrder;
+    return defaultOrder.map(id => [id]);
   });
 
   const persist = React.useCallback(
     next => {
-      setOrder(next);
+      setRows(next);
       try {
         localStorage.setItem(storageKey, JSON.stringify(next));
       } catch {}
@@ -21,7 +28,7 @@ export function useBlockOrder(storageKey, defaultOrder) {
     [storageKey],
   );
 
-  return [order, persist];
+  return [rows, persist];
 }
 
 /** Per-block heights (px), persisted to localStorage under `${storageKey}_sizes`. */
@@ -85,21 +92,55 @@ function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
   );
 }
 
-export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, height, onResize, children, style, ...rest }) {
+// Which edge of `rect` the point (x, y) is closest to — picks the drop intent:
+// left/right = "beside this block, same row", top/bottom = "new row above/below it".
+function edgeZone(x, y, rect) {
+  const rx = (x - rect.left) / rect.width;
+  const ry = (y - rect.top) / rect.height;
+  const dx = Math.min(rx, 1 - rx);
+  const dy = Math.min(ry, 1 - ry);
+  if (dx < dy) return rx < 0.5 ? 'left' : 'right';
+  return ry < 0.5 ? 'top' : 'bottom';
+}
+
+const EDGE_INDICATOR = {
+  left: { left: 0, top: 0, bottom: 0, width: 4 },
+  right: { right: 0, top: 0, bottom: 0, width: 4 },
+  top: { left: 0, right: 0, top: 0, height: 4 },
+  bottom: { left: 0, right: 0, bottom: 0, height: 4 },
+};
+
+export function DraggableBlock({ id, dragId, onDragStart, onDropZone, onDragEnd, height, onResize, children, style, ...rest }) {
   const dragging = dragId === id;
+  const [overZone, setOverZone] = React.useState(null);
+  const isDropSource = dragId != null;
+
   return (
     <div
       {...rest}
-      // The drop target is the whole block (not just the handle) — otherwise
-      // there's nowhere sane to actually release the drag onto.
-      onDragOver={e => e.preventDefault()}
+      onDragOver={e => {
+        e.preventDefault();
+        if (!isDropSource || dragging) return;
+        setOverZone(edgeZone(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()));
+      }}
+      onDragLeave={() => setOverZone(null)}
       onDrop={e => {
         e.preventDefault();
         e.stopPropagation();
-        onDrop(id);
+        const zone = edgeZone(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+        setOverZone(null);
+        onDropZone(id, zone);
       }}
-      style={{ opacity: dragging ? 0.4 : 1, transition: 'opacity var(--dur-fast) var(--ease-standard)', ...style }}
+      style={{ position: 'relative', opacity: dragging ? 0.4 : 1, transition: 'opacity var(--dur-fast) var(--ease-standard)', ...style }}
     >
+      {overZone && (
+        <span
+          style={{
+            position: 'absolute', zIndex: 3, background: 'var(--border-accent)', borderRadius: 2,
+            pointerEvents: 'none', ...EDGE_INDICATOR[overZone],
+          }}
+        />
+      )}
       <div
         draggable
         onDragStart={e => {
@@ -111,7 +152,7 @@ export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, hei
       >
         <Icon name="grip-vertical" size={14} style={{ background: 'var(--text-faint)' }} />
         <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
-          Перетащите заголовок — порядок · потяните нижний правый угол — размер
+          Перетащите заголовок: край блока — рядом, верх/низ — новая строка
         </span>
       </div>
       <ResizableArea id={id} height={height} onResize={onResize}>
@@ -121,51 +162,61 @@ export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, hei
   );
 }
 
-export function DraggableStack({ order, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)' }) {
+function moveBlock(rows, dragId, targetId, zone) {
+  const stripped = rows.map(r => r.filter(id => id !== dragId)).filter(r => r.length > 0);
+  if (targetId == null) return [...stripped, [dragId]];
+
+  const rowIdx = stripped.findIndex(r => r.includes(targetId));
+  if (rowIdx === -1) return [...stripped, [dragId]];
+
+  const next = stripped.map(r => [...r]);
+  const row = next[rowIdx];
+  const colIdx = row.indexOf(targetId);
+
+  if (zone === 'left') row.splice(colIdx, 0, dragId);
+  else if (zone === 'right') row.splice(colIdx + 1, 0, dragId);
+  else if (zone === 'top') next.splice(rowIdx, 0, [dragId]);
+  else next.splice(rowIdx + 1, 0, [dragId]);
+
+  return next;
+}
+
+export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)' }) {
   const [dragId, setDragId] = React.useState(null);
 
-  const moveBefore = targetId => {
-    if (dragId == null || dragId === targetId) return setDragId(null);
-    const next = order.filter(id => id !== dragId);
-    const idx = targetId == null ? next.length : next.indexOf(targetId);
-    next.splice(idx, 0, dragId);
-    onReorder(next);
+  const onDropZone = (targetId, zone) => {
+    if (dragId == null) return;
+    onReorder(moveBlock(rows, dragId, targetId, zone));
     setDragId(null);
   };
 
   return (
     <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
-        gridAutoRows: 'min-content',
-        alignItems: 'start',
-        gap,
-        minHeight: '100%',
-      }}
-      // Blank grid area (an empty cell, or space a narrowed block leaves
-      // beside it) isn't inside any block's own drop target — catch drops
-      // there too and just move the dragged block to the end, instead of
-      // silently rejecting them.
+      style={{ display: 'flex', flexDirection: 'column', gap }}
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
         e.preventDefault();
-        moveBefore(null);
+        onDropZone(null, null);
       }}
     >
-      {order.map(id => (
-        <DraggableBlock
-          key={id}
-          id={id}
-          dragId={dragId}
-          onDragStart={setDragId}
-          onDrop={moveBefore}
-          onDragEnd={() => setDragId(null)}
-          height={sizes[id] ?? defaultSizes[id]}
-          onResize={onResize}
-        >
-          {blocks[id]}
-        </DraggableBlock>
+      {rows.map((row, i) => (
+        <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'nowrap' }}>
+          {row.map(id => (
+            <div key={id} style={{ flex: '1 1 380px', minWidth: 0 }}>
+              <DraggableBlock
+                id={id}
+                dragId={dragId}
+                onDragStart={setDragId}
+                onDropZone={onDropZone}
+                onDragEnd={() => setDragId(null)}
+                height={sizes[id] ?? defaultSizes[id]}
+                onResize={onResize}
+              >
+                {blocks[id]}
+              </DraggableBlock>
+            </div>
+          ))}
+        </div>
       ))}
     </div>
   );

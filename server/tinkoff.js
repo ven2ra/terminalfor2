@@ -55,3 +55,26 @@ export async function getOrderBook(classCode, ticker, depth = 10) {
     asks: (json.asks || []).map(l => ({ price: quotationToNumber(l.price), qty: Number(l.quantity) })),
   };
 }
+
+// MOEX ISS trades.json anonymously lags real time by ~15 minutes; T-Invest's
+// GetLastTrades stays within roughly a couple of minutes of "now".
+export async function getLastTrades(classCode, ticker, minutes = 10, limit = 40) {
+  const uid = await resolveInstrumentUid(classCode, ticker);
+  if (!uid) return null;
+  const to = new Date();
+  const from = new Date(to.getTime() - minutes * 60000);
+  const json = await call('MarketDataService', 'GetLastTrades', {
+    instrumentId: uid,
+    from: from.toISOString(),
+    to: to.toISOString(),
+  });
+  return (json.trades || [])
+    .sort((a, b) => b.time.localeCompare(a.time))
+    .slice(0, limit)
+    .map(t => ({
+      time: new Date(t.time).toLocaleTimeString('ru-RU', { hour12: false, timeZone: 'Europe/Moscow' }),
+      price: quotationToNumber(t.price),
+      qty: Number(t.quantity),
+      side: t.direction === 'TRADE_DIRECTION_BUY' ? 'B' : 'S',
+    }));
+}

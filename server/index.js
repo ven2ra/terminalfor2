@@ -251,8 +251,15 @@ app.get('/api/trades/:symbol', async (req, res) => {
   const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
   const symbol = req.params.symbol.toUpperCase();
   try {
+    if (tinkoff.isEnabled()) {
+      const real = await tinkoff.getLastTrades(board, symbol).catch(e => {
+        console.error('T-Invest trades failed, falling back to MOEX ISS:', e.message);
+        return null;
+      });
+      if (real && real.length) return res.json({ trades: real, source: 'tinvest' });
+    }
     const trades = await loadTrades(market, board, symbol);
-    res.json(trades);
+    res.json({ trades, source: 'moex-iss' });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }

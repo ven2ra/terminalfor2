@@ -13,7 +13,7 @@ import { SegmentedControl } from '../../components/forms/SegmentedControl.jsx';
 import { AmountField } from '../../components/forms/AmountField.jsx';
 import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { PriceChart } from '../PriceChart.jsx';
-import { DraggableStack, useBlockOrder, useBlockSizes } from '../DraggableBlocks.jsx';
+import { DraggableStack, useBlockRows, useBlockSizes } from '../DraggableBlocks.jsx';
 import { NAV_GROUPS } from '../nav.js';
 import { fetchInstrument, fetchTrades, fetchOrderBook, fetchNews, fetchCandles } from '../api.js';
 
@@ -65,10 +65,11 @@ export function Instrument() {
   const inFlightRef = React.useRef(false);
   const reachedStartRef = React.useRef(false);
   const [trades, setTrades] = React.useState([]);
+  const [tradesSource, setTradesSource] = React.useState(null);
   const [book, setBook] = React.useState({ bids: [], asks: [] });
   const [news, setNews] = React.useState([]);
   const [error, setError] = React.useState(null);
-  const [order, setOrder] = useBlockOrder(BLOCK_ORDER_KEY, DEFAULT_ORDER);
+  const [rows, setRows] = useBlockRows(BLOCK_ORDER_KEY, DEFAULT_ORDER);
   const [sizes, setSize] = useBlockSizes(BLOCK_ORDER_KEY);
   const [tf, setTf] = React.useState('1h');
 
@@ -154,7 +155,8 @@ export function Instrument() {
       ]);
       setCandles(prev => mergeCandles(prev, c.candles || []));
       setChartLoading(false);
-      setTrades(t);
+      setTrades(t.trades || []);
+      setTradesSource(t.source);
       setBook(b);
       setError(null);
     } catch (e) {
@@ -246,7 +248,12 @@ export function Instrument() {
     ),
     trades: (
       <Card>
-        <SectionHeader title="Лента сделок" eyebrow="Реальные сделки MOEX" style={{ paddingBottom: 'var(--sp-6)' }} />
+        <SectionHeader
+          title="Лента сделок"
+          live={tradesSource === 'tinvest'}
+          eyebrow={tradesSource === 'tinvest' ? 'Реальные сделки · Т-Инвестиции (~1-2 мин)' : 'Реальные сделки MOEX · анонимный доступ, ~15 мин'}
+          style={{ paddingBottom: 'var(--sp-6)' }}
+        />
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th}>Время</th><th style={{ ...th, textAlign: 'right' }}>Цена, ₽</th><th style={{ ...th, textAlign: 'right' }}>Кол-во</th></tr></thead>
@@ -349,8 +356,8 @@ export function Instrument() {
 
           {blocks && (
             <DraggableStack
-              order={order}
-              onReorder={setOrder}
+              rows={rows}
+              onReorder={setRows}
               blocks={blocks}
               sizes={sizes}
               onResize={setSize}
