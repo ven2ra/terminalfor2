@@ -14,7 +14,7 @@ function ChartSkeleton({ height }) {
 }
 
 /** Real MOEX candles rendered with TradingView's open-source lightweight-charts library — our own data, no hosted widget, no external attribution required. */
-export function PriceChart({ candles = [], loading, height = 420 }) {
+export function PriceChart({ candles = [], loading, height = 420, symbol }) {
   const hostRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const seriesRef = React.useRef(null);
@@ -56,15 +56,36 @@ export function PriceChart({ candles = [], loading, height = 420 }) {
     };
   }, []);
 
+  const lastBarTimeRef = React.useRef(null);
+
   React.useEffect(() => {
     if (!seriesRef.current || !candles.length) return;
     const data = candles
       .map(c => ({ time: Math.floor(new Date(c.t.replace(' ', 'T') + 'Z').getTime() / 1000), open: c.o, high: c.h, low: c.l, close: c.c }))
       .filter(d => Number.isFinite(d.time))
       .sort((a, b) => a.time - b.time);
-    seriesRef.current.setData(data);
-    chartRef.current?.timeScale().fitContent();
+
+    // First load (or a symbol switch resetting the series): seed the whole
+    // history and fit the view once. Every later poll only pushes the most
+    // recent bar via update() — a full setData() would reset the user's zoom
+    // and pan on every 2s refresh, which reads as the chart "jumping".
+    if (lastBarTimeRef.current == null) {
+      seriesRef.current.setData(data);
+      chartRef.current?.timeScale().fitContent();
+    } else {
+      seriesRef.current.update(data[data.length - 1]);
+    }
+    lastBarTimeRef.current = data[data.length - 1]?.time ?? lastBarTimeRef.current;
   }, [candles]);
+
+  // The chart instance is created once and reused across symbol navigations
+  // (the Instrument page doesn't remount) — force a full re-seed when the
+  // symbol changes so we don't try to "update" a leftover bar from the
+  // previous instrument.
+  React.useEffect(() => {
+    lastBarTimeRef.current = null;
+    seriesRef.current?.setData([]);
+  }, [symbol]);
 
   return (
     <div style={{ position: 'relative', height, width: '100%' }}>

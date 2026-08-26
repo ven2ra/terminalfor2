@@ -206,7 +206,7 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   try {
     const info = await loadOneSecurity(market, board, symbol);
-    res.json(simulateOrderBook(info?.priceRaw, symbol + new Date().toISOString().slice(0, 15)));
+    res.json(simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000)));
   } catch (e) {
     res.status(502).json({ error: e.message });
   }

@@ -46,23 +46,46 @@ export function Instrument() {
   const [qty, setQty] = React.useState('1');
   const [submitted, setSubmitted] = React.useState(null);
 
+  // Switching instruments reuses this page instance — clear stale data so the
+  // previous symbol's price/candles/trades don't flash before the new ones load.
+  React.useEffect(() => {
+    setInfo(null);
+    setCandles([]);
+    setChartLoading(true);
+    setTrades([]);
+    setBook({ bids: [], asks: [] });
+    setNews([]);
+    setPrice('');
+    setSubmitted(null);
+  }, [symbol, market, board]);
+
+  // Instrument info + news barely change — a slow poll is enough.
   const load = React.useCallback(async () => {
     try {
-      const [i, c, t, b, n] = await Promise.all([
-        fetchInstrument(symbol, market, board),
+      const [i, n] = await Promise.all([fetchInstrument(symbol, market, board), fetchNews(symbol, market, board)]);
+      setInfo(i);
+      setNews(n);
+      setError(null);
+      setPrice(p => (p ? p : i.priceRaw != null ? String(i.priceRaw) : ''));
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [symbol, market, board]);
+
+  // Chart, order book and trade tape are the "live" panels — poll them fast so the
+  // page feels synced with the market instead of stepping in 15s jumps.
+  const loadLive = React.useCallback(async () => {
+    try {
+      const [c, t, b] = await Promise.all([
         fetchCandles(symbol, market, board),
         fetchTrades(symbol, market, board),
         fetchOrderBook(symbol, market, board),
-        fetchNews(symbol, market, board),
       ]);
-      setInfo(i);
       setCandles(c.candles || []);
       setChartLoading(false);
       setTrades(t);
       setBook(b);
-      setNews(n);
       setError(null);
-      setPrice(p => (p ? p : i.priceRaw != null ? String(i.priceRaw) : ''));
     } catch (e) {
       setError(e.message);
     }
@@ -73,6 +96,12 @@ export function Instrument() {
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, [load]);
+
+  React.useEffect(() => {
+    loadLive();
+    const id = setInterval(loadLive, 2000);
+    return () => clearInterval(id);
+  }, [loadLive]);
 
   const total = (Number(price) || 0) * (Number(qty) || 0);
 
@@ -90,7 +119,7 @@ export function Instrument() {
           <SectionHeader title="График" eyebrow="Реальные свечи MOEX · часовой таймфрейм" />
         </div>
         <div style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-3)' }}>
-          <PriceChart candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 100)} />
+          <PriceChart symbol={symbol} candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 100)} />
         </div>
       </Card>
     ),

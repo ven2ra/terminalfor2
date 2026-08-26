@@ -70,9 +70,10 @@ function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
     <div
       ref={ref}
       style={{
-        resize: 'vertical',
+        resize: 'both',
         overflow: 'auto',
         minHeight,
+        minWidth: 280,
         height: height || undefined,
         borderRadius: 'var(--r-card)',
       }}
