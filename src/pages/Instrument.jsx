@@ -11,15 +11,18 @@ import { PriceValue } from '../../components/data/PriceValue.jsx';
 import { DeltaChip } from '../../components/core/DeltaChip.jsx';
 import { SegmentedControl } from '../../components/forms/SegmentedControl.jsx';
 import { AmountField } from '../../components/forms/AmountField.jsx';
+import { SelectMenu } from '../../components/forms/SelectMenu.jsx';
 import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { PriceChart } from '../PriceChart.jsx';
 import { DraggableStack, useBlockRows, useBlockSizes } from '../DraggableBlocks.jsx';
 import { NAV_GROUPS } from '../nav.js';
 import { fetchInstrument, fetchTrades, fetchOrderBook, fetchNews, fetchCandles } from '../api.js';
+import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
 
-const BLOCK_ORDER_KEY = 'tf2_instrument_block_order_v1';
-const DEFAULT_ORDER = ['chart', 'orderbook', 'trades', 'order', 'news'];
-const DEFAULT_BLOCK_HEIGHTS = { chart: 500, orderbook: 360, trades: 400, order: 440, news: 360 };
+const BLOCK_ORDER_KEY = 'tf2_instrument_block_order_v2';
+const DEFAULT_ORDER = ['chart', 'orderbook', 'trades', 'order', 'position', 'news'];
+const DEFAULT_BLOCK_HEIGHTS = { chart: 520, orderbook: 460, trades: 400, order: 480, position: 320, news: 360 };
+const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
 
 const TIMEFRAMES = [
   { code: '1m', label: '1м' },
@@ -52,9 +55,14 @@ function fmtTime(iso) {
   }
 }
 
+function fmtRub(n, opts) {
+  return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
+}
+
 export function Instrument() {
   const { market, board, symbol } = useParams();
   const navigate = useNavigate();
+  const account = useDemoAccount();
   const [info, setInfo] = React.useState(null);
   const [candles, setCandles] = React.useState([]);
   const [chartLoading, setChartLoading] = React.useState(true);
@@ -66,15 +74,18 @@ export function Instrument() {
   const reachedStartRef = React.useRef(false);
   const [trades, setTrades] = React.useState([]);
   const [tradesSource, setTradesSource] = React.useState(null);
-  const [book, setBook] = React.useState({ bids: [], asks: [] });
+  const [book, setBook] = React.useState({ bids: [], asks: [], lotSize: 1 });
   const [news, setNews] = React.useState([]);
   const [error, setError] = React.useState(null);
   const [rows, setRows] = useBlockRows(BLOCK_ORDER_KEY, DEFAULT_ORDER);
   const [sizes, setSize] = useBlockSizes(BLOCK_ORDER_KEY);
   const [tf, setTf] = React.useState('1h');
+  const [largeTradesOnly, setLargeTradesOnly] = React.useState(false);
 
   const [side, setSide] = React.useState('Купить');
+  const [orderType, setOrderType] = React.useState('Рыночная');
   const [price, setPrice] = React.useState('');
+  const [stopPrice, setStopPrice] = React.useState('');
   const [qty, setQty] = React.useState('1');
   const [submitted, setSubmitted] = React.useState(null);
 
@@ -85,9 +96,10 @@ export function Instrument() {
     setCandles([]);
     setChartLoading(true);
     setTrades([]);
-    setBook({ bids: [], asks: [] });
+    setBook({ bids: [], asks: [], lotSize: 1 });
     setNews([]);
     setPrice('');
+    setStopPrice('');
     setSubmitted(null);
   }, [symbol, market, board]);
 
@@ -159,6 +171,9 @@ export function Instrument() {
       setTradesSource(t.source);
       setBook(b);
       setError(null);
+
+      const lastClose = c.candles?.length ? c.candles[c.candles.length - 1].c : null;
+      if (lastClose) checkPendingOrders(symbol, lastClose);
     } catch (e) {
       setError(e.message);
     }
@@ -176,14 +191,60 @@ export function Instrument() {
     return () => clearInterval(id);
   }, [loadLive]);
 
-  const total = (Number(price) || 0) * (Number(qty) || 0);
+  const lotSize = info?.lotSize || 1;
+  const isMarket = orderType === 'Рыночная';
+  const isLimitLike = orderType === 'Лимитная' || orderType === 'Стоп-лимит';
+  const needsStop = orderType === 'Стоп-лимит' || orderType === 'Стоп-маркет';
+  const effectivePrice = isMarket ? info?.priceRaw || 0 : Number(price) || 0;
+  const qtyNum = Number(qty) || 0;
+  const notional = effectivePrice * qtyNum * lotSize;
+  const commission = notional * commissionRate();
+  const totalCost = notional + commission;
+
+  const position = account.positions[symbol];
+  const pendingOrders = account.orders.filter(o => o.symbol === symbol);
+  const unrealizedPnl = position ? (info?.priceRaw || position.avgPrice) * position.qty * lotSize - position.avgPrice * position.qty * lotSize : 0;
+  const unrealizedPct = position && position.avgPrice ? ((info?.priceRaw || position.avgPrice) - position.avgPrice) / position.avgPrice * 100 : 0;
+
+  const setQtyFromPercent = pct => {
+    if (side === 'Продать') {
+      const held = position?.qty || 0;
+      setQty(String(Math.max(1, Math.floor((held * pct) / 100))));
+      return;
+    }
+    const refPrice = isMarket ? info?.priceRaw || 0 : Number(price) || info?.priceRaw || 0;
+    if (!refPrice) return;
+    const budget = (account.cash * pct) / 100;
+    const lots = Math.max(1, Math.floor(budget / (refPrice * lotSize)));
+    setQty(String(lots));
+  };
 
   const submitOrder = () => {
-    setSubmitted({ side, price, qty, at: new Date() });
+    const result = placeOrder({
+      symbol,
+      market,
+      board,
+      name: info?.name,
+      side,
+      type: orderType,
+      qty: qtyNum,
+      price: Number(price) || 0,
+      stopPrice: Number(stopPrice) || 0,
+      lastPrice: info?.priceRaw || 0,
+    });
+    setSubmitted({ ...result, side, type: orderType, qty: qtyNum, at: new Date() });
   };
+
+  const fillPriceFromBook = p => setPrice(String(p));
 
   const th = { font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)', fontWeight: 'var(--fw-medium)', textAlign: 'left', padding: '0 var(--sp-4) var(--sp-4)' };
   const td = { padding: 'var(--sp-3) var(--sp-4)', font: 'var(--type-numeric)', fontVariantNumeric: 'tabular-nums' };
+
+  const displayedTrades = largeTradesOnly
+    ? [...trades].sort((a, b) => b.qty * b.price - a.qty * a.price).slice(0, 20)
+    : trades;
+
+  const maxBookQty = Math.max(1, ...book.bids.map(l => l.qty), ...book.asks.map(l => l.qty));
 
   const blocks = info && {
     chart: (
@@ -213,18 +274,28 @@ export function Instrument() {
         <SectionHeader
           title="Стакан заявок"
           live={book.source === 'tinvest'}
-          eyebrow={book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано вокруг текущей цены · демо'}
-          style={{ paddingBottom: 'var(--sp-6)' }}
+          eyebrow={book.source === 'tinvest' ? `Реальный стакан · Т-Инвестиции · ${book.bids.length} уровней` : `Смоделировано вокруг текущей цены · демо · ${book.bids.length} уровней`}
+          style={{ paddingBottom: 'var(--sp-5)' }}
         />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-6)' }}>
           <div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>Покупка, ₽</th><th style={{ ...th, textAlign: 'right' }}>Кол-во</th></tr></thead>
+              <thead><tr><th style={th}>Покупка, ₽</th><th style={{ ...th, textAlign: 'right' }}>Лоты</th><th style={{ ...th, textAlign: 'right' }}>Сумма, ₽</th></tr></thead>
               <tbody>
                 {book.bids.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{ ...td, color: 'var(--positive)' }}>{r.price.toLocaleString('ru-RU')}</td>
+                  <tr
+                    key={i}
+                    onClick={() => fillPriceFromBook(r.price)}
+                    style={{ cursor: 'pointer', position: 'relative' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <td style={{ ...td, color: 'var(--positive)', fontWeight: i === 0 ? 'var(--fw-bold)' : 'var(--fw-regular)', position: 'relative' }}>
+                      <span style={{ position: 'absolute', inset: 0, right: `${100 - (r.qty / maxBookQty) * 100}%`, background: 'var(--positive-soft)', zIndex: 0 }} />
+                      <span style={{ position: 'relative' }}>{fmtRub(r.price)}</span>
+                    </td>
                     <td style={{ ...td, textAlign: 'right', color: 'var(--text-body)' }}>{r.qty.toLocaleString('ru-RU')}</td>
+                    <td style={{ ...td, textAlign: 'right', color: 'var(--text-faint)' }}>{fmtRub(r.value, { maximumFractionDigits: 0 })}</td>
                   </tr>
                 ))}
               </tbody>
@@ -232,17 +303,30 @@ export function Instrument() {
           </div>
           <div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>Продажа, ₽</th><th style={{ ...th, textAlign: 'right' }}>Кол-во</th></tr></thead>
+              <thead><tr><th style={th}>Продажа, ₽</th><th style={{ ...th, textAlign: 'right' }}>Лоты</th><th style={{ ...th, textAlign: 'right' }}>Сумма, ₽</th></tr></thead>
               <tbody>
                 {book.asks.map((r, i) => (
-                  <tr key={i}>
-                    <td style={{ ...td, color: 'var(--negative)' }}>{r.price.toLocaleString('ru-RU')}</td>
+                  <tr
+                    key={i}
+                    onClick={() => fillPriceFromBook(r.price)}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <td style={{ ...td, color: 'var(--negative)', fontWeight: i === 0 ? 'var(--fw-bold)' : 'var(--fw-regular)', position: 'relative' }}>
+                      <span style={{ position: 'absolute', inset: 0, right: `${100 - (r.qty / maxBookQty) * 100}%`, background: 'var(--negative-soft)', zIndex: 0 }} />
+                      <span style={{ position: 'relative' }}>{fmtRub(r.price)}</span>
+                    </td>
                     <td style={{ ...td, textAlign: 'right', color: 'var(--text-body)' }}>{r.qty.toLocaleString('ru-RU')}</td>
+                    <td style={{ ...td, textAlign: 'right', color: 'var(--text-faint)' }}>{fmtRub(r.value, { maximumFractionDigits: 0 })}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
+        <div style={{ paddingTop: 'var(--sp-4)', font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
+          Клик по цене — подставить в заявку · лот = {lotSize} шт
         </div>
       </Card>
     ),
@@ -252,16 +336,17 @@ export function Instrument() {
           title="Лента сделок"
           live={tradesSource === 'tinvest'}
           eyebrow={tradesSource === 'tinvest' ? 'Реальные сделки · Т-Инвестиции (~1-2 мин)' : 'Реальные сделки MOEX · анонимный доступ, ~15 мин'}
+          actions={<FilterTabs options={['Все', 'Крупные']} value={largeTradesOnly ? 'Крупные' : 'Все'} onChange={v => setLargeTradesOnly(v === 'Крупные')} />}
           style={{ paddingBottom: 'var(--sp-6)' }}
         />
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={th}>Время</th><th style={{ ...th, textAlign: 'right' }}>Цена, ₽</th><th style={{ ...th, textAlign: 'right' }}>Кол-во</th></tr></thead>
             <tbody>
-              {trades.map((t, i) => (
+              {displayedTrades.map((t, i) => (
                 <tr key={i}>
                   <td style={{ ...td, color: 'var(--text-faint)' }}>{t.time}</td>
-                  <td style={{ ...td, textAlign: 'right', color: t.side === 'B' ? 'var(--positive)' : 'var(--negative)' }}>{t.price.toLocaleString('ru-RU')}</td>
+                  <td style={{ ...td, textAlign: 'right', color: t.side === 'B' ? 'var(--positive)' : 'var(--negative)' }}>{fmtRub(t.price)}</td>
                   <td style={{ ...td, textAlign: 'right', color: 'var(--text-body)' }}>{t.qty.toLocaleString('ru-RU')}</td>
                 </tr>
               ))}
@@ -272,24 +357,116 @@ export function Instrument() {
     ),
     order: (
       <Card variant="panel">
-        <SectionHeader title="Новая заявка" eyebrow="Демо-режим · заявки не отправляются на биржу" style={{ paddingBottom: 'var(--sp-7)' }} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)', maxWidth: 420 }}>
+        <SectionHeader title="Новая заявка" eyebrow="Демо-режим · исполнение симулируется, но по настоящей логике" style={{ paddingBottom: 'var(--sp-7)' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)', maxWidth: 460 }}>
           <SegmentedControl options={['Купить', 'Продать']} value={side} onChange={setSide} />
-          <AmountField label="Цена, ₽" value={price} onChange={e => setPrice(e.target.value)} currency="₽" />
-          <AmountField label="Количество, шт" value={qty} onChange={e => setQty(e.target.value)} currency={info.lotSize > 1 ? `лот ${info.lotSize}` : 'шт'} />
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>Итого</span>
-            <span style={{ font: 'var(--type-numeric-strong)', color: 'var(--text-primary)' }}>{total.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽</span>
+          <SelectMenu options={ORDER_TYPES} value={orderType} onChange={setOrderType} />
+
+          {!isMarket && (
+            <AmountField
+              label={needsStop ? 'Цена исполнения, ₽' : 'Цена, ₽'}
+              value={price}
+              onChange={e => setPrice(e.target.value)}
+              currency="₽"
+            />
+          )}
+          {needsStop && (
+            <AmountField label="Стоп-цена, ₽" value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency="₽" />
+          )}
+          <AmountField label="Количество" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
+
+          <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+            {[10, 25, 50, 100].map(pct => (
+              <Button key={pct} variant="secondary" size="sm" style={{ flex: 1 }} onClick={() => setQtyFromPercent(pct)}>
+                {pct}%
+              </Button>
+            ))}
           </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', padding: 'var(--sp-5)', background: 'var(--surface-inset)', borderRadius: 'var(--r-lg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>
+              <span>Сумма</span><span>{fmtRub(notional)} ₽</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>
+              <span>Комиссия ({(commissionRate() * 100).toFixed(2)}%)</span><span>{fmtRub(commission)} ₽</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-numeric-strong)', color: 'var(--text-primary)', paddingTop: 4, borderTop: '1px solid var(--border-hairline)' }}>
+              <span>Итого</span><span>{fmtRub(totalCost)} ₽</span>
+            </div>
+            <div style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
+              Доступно: {fmtRub(account.cash)} ₽
+            </div>
+          </div>
+
           <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth onClick={submitOrder}>
             {side} {symbol}
           </Button>
+
           {submitted && (
-            <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
-              Демо-заявка «{submitted.side} {qty} × {symbol} по {submitted.price} ₽» создана в {submitted.at.toLocaleTimeString('ru-RU')} — реальная торговля не выполняется.
+            <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: submitted.ok ? 'var(--text-faint)' : 'var(--negative)' }}>
+              {submitted.ok
+                ? submitted.filled
+                  ? `Исполнено: ${submitted.side} ${submitted.qty} лот × ${symbol} по рынку в ${submitted.at.toLocaleTimeString('ru-RU')}.`
+                  : `Заявка «${submitted.type}» поставлена в очередь и исполнится при достижении цены — см. «Активные заявки» ниже.`
+                : `Не выполнено: ${submitted.error}`}
             </span>
           )}
         </div>
+      </Card>
+    ),
+    position: (
+      <Card>
+        <SectionHeader title="Позиция" eyebrow={`Демо-счёт · баланс ${fmtRub(account.cash)} ₽`} style={{ paddingBottom: 'var(--sp-6)' }} />
+        {position ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--sp-6)' }}>
+              <div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Количество</div>
+                <div style={{ font: 'var(--type-h3)', color: 'var(--text-primary)' }}>{position.qty.toLocaleString('ru-RU')} шт</div>
+              </div>
+              <div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Средняя цена</div>
+                <div style={{ font: 'var(--type-h3)', color: 'var(--text-primary)' }}>{fmtRub(position.avgPrice)} ₽</div>
+              </div>
+              <div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Нереализ. P&L</div>
+                <div style={{ font: 'var(--type-h3)', color: unrealizedPnl >= 0 ? 'var(--positive)' : 'var(--negative)' }}>{fmtRub(unrealizedPnl)} ₽</div>
+              </div>
+              <div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>P&L, %</div>
+                <DeltaChip value={unrealizedPct} showIcon />
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              fullWidth
+              onClick={() => {
+                const result = placeOrder({ symbol, market, board, name: info?.name, side: 'Продать', type: 'Рыночная', qty: position.qty, lastPrice: info?.priceRaw || 0 });
+                setSubmitted({ ...result, side: 'Продать', type: 'Рыночная', qty: position.qty, at: new Date() });
+              }}
+            >
+              Закрыть позицию
+            </Button>
+          </div>
+        ) : (
+          <div style={{ font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>Нет открытой позиции по {symbol}.</div>
+        )}
+
+        {pendingOrders.length > 0 && (
+          <div style={{ marginTop: 'var(--sp-7)', paddingTop: 'var(--sp-6)', borderTop: '1px solid var(--border-hairline)' }}>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)', paddingBottom: 'var(--sp-4)' }}>Активные заявки</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+              {pendingOrders.map(o => (
+                <div key={o.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-4)', padding: 'var(--sp-4) var(--sp-5)', background: 'var(--surface-inset)', borderRadius: 'var(--r-md)' }}>
+                  <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-body)' }}>
+                    {o.side} {o.qty} лот · {o.type}{o.price ? ` по ${fmtRub(o.price)} ₽` : ''}{o.stopPrice ? ` (стоп ${fmtRub(o.stopPrice)} ₽)` : ''}
+                  </span>
+                  <IconButton icon="x" size={26} label="Отменить заявку" onClick={() => cancelOrder(o.id)} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
     ),
     news: (
@@ -340,16 +517,33 @@ export function Instrument() {
           {error && <Card style={{ color: 'var(--negative)' }}>Ошибка загрузки: {error}</Card>}
 
           {info && (
-            <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--sp-7)' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
-                  {symbol} · {board} · {market === 'bonds' ? 'Облигация' : 'Акция'}
-                </span>
-                <span style={{ font: 'var(--type-h2)', color: 'var(--text-primary)' }}>{info.name}</span>
+            <Card style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--sp-7)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
+                    {symbol} · {board} · {market === 'bonds' ? 'Облигация' : 'Акция'}
+                  </span>
+                  <span style={{ font: 'var(--type-h2)', color: 'var(--text-primary)' }}>{info.name}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-6)' }}>
+                  <PriceValue value={info.priceRaw} currency={market === 'bonds' ? '' : '₽'} suffix={market === 'bonds' ? '%' : undefined} size="md" />
+                  <DeltaChip value={info.deltaRaw} showIcon />
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-6)' }}>
-                <PriceValue value={info.priceRaw} currency={market === 'bonds' ? '' : '₽'} suffix={market === 'bonds' ? '%' : undefined} size="md" />
-                <DeltaChip value={info.deltaRaw} showIcon />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-8)', paddingTop: 'var(--sp-5)', borderTop: '1px solid var(--border-hairline)' }}>
+                {[
+                  ['Спред', info.spread != null ? `${fmtRub(info.spread)} ₽` : '—'],
+                  ['Bid / Ask', info.bid != null && info.offer != null ? `${fmtRub(info.bid)} / ${fmtRub(info.offer)}` : '—'],
+                  ['Диапазон дня', info.dayLow != null && info.dayHigh != null ? `${fmtRub(info.dayLow)} – ${fmtRub(info.dayHigh)}` : '—'],
+                  ['С открытия', info.changeFromOpen != null ? `${info.changeFromOpen > 0 ? '+' : ''}${info.changeFromOpen}%` : '—'],
+                  ['Объём, шт', info.volumeToday ? Math.round(info.volumeToday).toLocaleString('ru-RU') : '—'],
+                  ['Оборот, ₽', info.turnoverToday ? Math.round(info.turnoverToday).toLocaleString('ru-RU') : '—'],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>{label}</span>
+                    <span style={{ font: 'var(--type-numeric-strong)', color: 'var(--text-primary)' }}>{value}</span>
+                  </div>
+                ))}
               </div>
             </Card>
           )}

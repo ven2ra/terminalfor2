@@ -68,6 +68,8 @@ async function loadOneSecurity(market, board, symbol) {
   const price = md.LAST ?? s.PREVPRICE ?? null;
   const prevPrice = s.PREVPRICE ?? null;
   const change = price != null && prevPrice ? ((price - prevPrice) / prevPrice) * 100 : null;
+  const open = md.OPEN ?? null;
+  const changeFromOpen = price != null && open ? ((price - open) / open) * 100 : null;
   return {
     symbol: s.SECID,
     name: s.SECNAME || s.SHORTNAME || s.SECID,
@@ -77,6 +79,15 @@ async function loadOneSecurity(market, board, symbol) {
     deltaRaw: change != null ? Number(change.toFixed(2)) : 0,
     volumeRaw: Number(md.VALTODAY || 0),
     lotSize: Number(s.LOTSIZE || 1),
+    bid: md.BID != null ? Number(md.BID) : null,
+    offer: md.OFFER != null ? Number(md.OFFER) : null,
+    spread: md.SPREAD != null ? Number(md.SPREAD) : null,
+    dayOpen: open != null ? Number(open) : null,
+    dayLow: md.LOW != null ? Number(md.LOW) : null,
+    dayHigh: md.HIGH != null ? Number(md.HIGH) : null,
+    turnoverToday: Number(md.VALTODAY || 0),
+    volumeToday: Number(md.VOLTODAY || 0),
+    changeFromOpen: changeFromOpen != null ? Number(changeFromOpen.toFixed(2)) : null,
   };
 }
 
@@ -155,7 +166,7 @@ async function loadTrades(market, board, symbol) {
 // reachable anonymously via ISS. This generates a plausible-looking book around
 // the last traded price so the panel has something to render — it is explicitly
 // labelled "смоделировано" (simulated) in the UI, never presented as live depth.
-function simulateOrderBook(lastPrice, seedKey) {
+function simulateOrderBook(lastPrice, seedKey, depth = 20) {
   if (!lastPrice) return { bids: [], asks: [] };
   let seed = 0;
   for (let i = 0; i < seedKey.length; i++) seed = (seed * 31 + seedKey.charCodeAt(i)) >>> 0;
@@ -164,13 +175,8 @@ function simulateOrderBook(lastPrice, seedKey) {
     return (seed >>> 8) / 0xffffff;
   };
   const step = Math.max(lastPrice * 0.0006, 0.01);
-  const levels = n =>
-    Array.from({ length: n }, (_, i) => ({
-      price: Number((lastPrice + (i + 1) * step * (n === undefined ? 1 : 1)).toFixed(2)),
-      qty: Math.round(10 + rand() * 400) * 10,
-    }));
-  const bids = Array.from({ length: 10 }, (_, i) => ({ price: Number((lastPrice - (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
-  const asks = Array.from({ length: 10 }, (_, i) => ({ price: Number((lastPrice + (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
+  const bids = Array.from({ length: depth }, (_, i) => ({ price: Number((lastPrice - (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
+  const asks = Array.from({ length: depth }, (_, i) => ({ price: Number((lastPrice + (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
   return { bids, asks };
 }
 
@@ -270,17 +276,23 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
   const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
   const symbol = req.params.symbol.toUpperCase();
   try {
+    const info = await loadOneSecurity(market, board, symbol);
+    const lotSize = info?.lotSize || 1;
+    const withValue = book => ({
+      bids: book.bids.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
+      asks: book.asks.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
+    });
+
     if (tinkoff.isEnabled()) {
-      const real = await tinkoff.getOrderBook(board, symbol, 10).catch(e => {
+      const real = await tinkoff.getOrderBook(board, symbol, 20).catch(e => {
         console.error('T-Invest order book failed, falling back to simulated:', e.message);
         return null;
       });
       if (real && (real.bids.length || real.asks.length)) {
-        return res.json({ ...real, source: 'tinvest' });
+        return res.json({ ...withValue(real), lotSize, source: 'tinvest' });
       }
     }
-    const info = await loadOneSecurity(market, board, symbol);
-    res.json({ ...simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000)), source: 'simulated' });
+    res.json({ ...withValue(simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000))), lotSize, source: 'simulated' });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
