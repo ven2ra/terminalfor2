@@ -11,13 +11,14 @@ import { PriceValue } from '../../components/data/PriceValue.jsx';
 import { DeltaChip } from '../../components/core/DeltaChip.jsx';
 import { SegmentedControl } from '../../components/forms/SegmentedControl.jsx';
 import { AmountField } from '../../components/forms/AmountField.jsx';
-import { TradingViewChart } from '../TradingViewChart.jsx';
-import { DraggableStack, useBlockOrder } from '../DraggableBlocks.jsx';
+import { PriceChart } from '../PriceChart.jsx';
+import { DraggableStack, useBlockOrder, useBlockSizes } from '../DraggableBlocks.jsx';
 import { NAV_GROUPS } from '../nav.js';
-import { fetchInstrument, fetchTrades, fetchOrderBook, fetchNews } from '../api.js';
+import { fetchInstrument, fetchTrades, fetchOrderBook, fetchNews, fetchCandles } from '../api.js';
 
 const BLOCK_ORDER_KEY = 'tf2_instrument_block_order_v1';
 const DEFAULT_ORDER = ['chart', 'orderbook', 'trades', 'order', 'news'];
+const DEFAULT_BLOCK_HEIGHTS = { chart: 500, orderbook: 360, trades: 400, order: 440, news: 360 };
 
 function fmtTime(iso) {
   try {
@@ -31,11 +32,14 @@ export function Instrument() {
   const { market, board, symbol } = useParams();
   const navigate = useNavigate();
   const [info, setInfo] = React.useState(null);
+  const [candles, setCandles] = React.useState([]);
+  const [chartLoading, setChartLoading] = React.useState(true);
   const [trades, setTrades] = React.useState([]);
   const [book, setBook] = React.useState({ bids: [], asks: [] });
   const [news, setNews] = React.useState([]);
   const [error, setError] = React.useState(null);
   const [order, setOrder] = useBlockOrder(BLOCK_ORDER_KEY, DEFAULT_ORDER);
+  const [sizes, setSize] = useBlockSizes(BLOCK_ORDER_KEY);
 
   const [side, setSide] = React.useState('Купить');
   const [price, setPrice] = React.useState('');
@@ -44,13 +48,16 @@ export function Instrument() {
 
   const load = React.useCallback(async () => {
     try {
-      const [i, t, b, n] = await Promise.all([
+      const [i, c, t, b, n] = await Promise.all([
         fetchInstrument(symbol, market, board),
+        fetchCandles(symbol, market, board),
         fetchTrades(symbol, market, board),
         fetchOrderBook(symbol, market, board),
         fetchNews(symbol, market, board),
       ]);
       setInfo(i);
+      setCandles(c.candles || []);
+      setChartLoading(false);
       setTrades(t);
       setBook(b);
       setNews(n);
@@ -80,10 +87,10 @@ export function Instrument() {
     chart: (
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: 'var(--sp-7) var(--sp-7) 0' }}>
-          <SectionHeader title="График" eyebrow="Данные TradingView · MOEX" />
+          <SectionHeader title="График" eyebrow="Реальные свечи MOEX · часовой таймфрейм" />
         </div>
-        <div style={{ padding: 'var(--sp-6) var(--sp-3) var(--sp-3)' }}>
-          <TradingViewChart symbol={symbol} height={440} />
+        <div style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-3)' }}>
+          <PriceChart candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 100)} />
         </div>
       </Card>
     ),
@@ -223,7 +230,16 @@ export function Instrument() {
             </Card>
           )}
 
-          {blocks && <DraggableStack order={order} onReorder={setOrder} blocks={blocks} />}
+          {blocks && (
+            <DraggableStack
+              order={order}
+              onReorder={setOrder}
+              blocks={blocks}
+              sizes={sizes}
+              onResize={setSize}
+              defaultSizes={DEFAULT_BLOCK_HEIGHTS}
+            />
+          )}
         </main>
       </div>
     </div>
