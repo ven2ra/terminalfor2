@@ -152,6 +152,14 @@ function ResizableArea({ id, size, onResize, minHeight = 160, minWidth = 240, ch
         overflow: 'auto',
         minHeight,
         minWidth,
+        // `maxWidth` matters as much as the wrapper's own — this is the
+        // actual element the native `resize` handle drags, and without a
+        // cap here the handle can pull it wider than its wrapper (which the
+        // wrapper's own max-width can't prevent, since it's a *sibling*
+        // constraint, not something enforced on this child). A width stored
+        // from a wider viewport/zoom level would then overflow the row
+        // instead of wrapping onto its own line at a narrower one.
+        maxWidth: '100%',
         width: '100%',
         height: size?.h || undefined,
         borderRadius: 'var(--r-card)',
