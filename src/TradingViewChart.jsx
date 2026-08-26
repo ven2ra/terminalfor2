@@ -1,7 +1,5 @@
 import React from 'react';
 
-let seq = 0;
-
 /**
  * Embeds TradingView's free Advanced Chart widget for a MOEX-listed symbol.
  * Note: TradingView's free embed requires its own small attribution mark to stay
@@ -9,7 +7,6 @@ let seq = 0;
  * hidden via the widget's own config, but that mark cannot be stripped.
  */
 export function TradingViewChart({ symbol, height = 420, style }) {
-  const containerId = React.useRef(`tv-chart-${++seq}`);
   const hostRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -17,16 +14,25 @@ export function TradingViewChart({ symbol, height = 420, style }) {
     if (!host) return;
     host.innerHTML = '';
 
+    // TradingView's embed script reads its config from its own textContent and
+    // looks for a sibling ".tradingview-widget-container__widget" div to mount
+    // into — it must NOT be nested inside that div, only alongside it.
+    const wrapper = document.createElement('div');
+    wrapper.className = 'tradingview-widget-container';
+    wrapper.style.height = '100%';
+    wrapper.style.width = '100%';
+
     const widgetDiv = document.createElement('div');
-    widgetDiv.id = containerId.current;
+    widgetDiv.className = 'tradingview-widget-container__widget';
     widgetDiv.style.height = '100%';
     widgetDiv.style.width = '100%';
-    host.appendChild(widgetDiv);
+    wrapper.appendChild(widgetDiv);
 
     const script = document.createElement('script');
+    script.type = 'text/javascript';
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
     script.async = true;
-    script.innerHTML = JSON.stringify({
+    script.text = JSON.stringify({
       autosize: true,
       symbol: `MOEX:${symbol}`,
       interval: '60',
@@ -43,7 +49,9 @@ export function TradingViewChart({ symbol, height = 420, style }) {
       save_image: false,
       support_host: 'https://www.tradingview.com',
     });
-    widgetDiv.appendChild(script);
+    wrapper.appendChild(script);
+
+    host.appendChild(wrapper);
 
     return () => {
       host.innerHTML = '';
