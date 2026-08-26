@@ -1,5 +1,6 @@
 import React from 'react';
 import { Icon } from '../components/core/Icon.jsx';
+import { IconButton } from '../components/core/IconButton.jsx';
 
 /** Rows of block ids (each row is a horizontal group) — lets a block be
  * dropped either beside a neighbor (same row) or on a new row below/above
@@ -34,7 +35,9 @@ export function useBlockRows(storageKey, defaultOrder) {
     [storageKey],
   );
 
-  return [rows, persist];
+  const reset = React.useCallback(() => persist(defaultRows), [persist, defaultRows]);
+
+  return [rows, persist, reset];
 }
 
 /** Per-block heights (px), persisted to localStorage under `${storageKey}_sizes`. */
@@ -62,7 +65,14 @@ export function useBlockSizes(storageKey) {
     [key],
   );
 
-  return [sizes, setSize];
+  const reset = React.useCallback(() => {
+    setSizes({});
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  }, [key]);
+
+  return [sizes, setSize, reset];
 }
 
 /** Per-widget show/hide, persisted to localStorage under `${storageKey}_visible`.
@@ -81,10 +91,10 @@ export function useWidgetVisibility(storageKey, ids) {
     return init;
   });
 
-  const toggle = React.useCallback(
-    id => {
+  const set = React.useCallback(
+    (id, value) => {
       setVisible(prev => {
-        const next = { ...prev, [id]: !prev[id] };
+        const next = { ...prev, [id]: value };
         try {
           localStorage.setItem(key, JSON.stringify(next));
         } catch {}
@@ -94,21 +104,44 @@ export function useWidgetVisibility(storageKey, ids) {
     [key],
   );
 
-  return [visible, toggle];
+  const visibleRef = React.useRef(visible);
+  visibleRef.current = visible;
+  const toggle = React.useCallback(id => set(id, !visibleRef.current[id]), [set]);
+
+  const reset = React.useCallback(() => {
+    const all = {};
+    ids.forEach(id => { all[id] = true; });
+    setVisible(all);
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  }, [key, ids]);
+
+  return [visible, toggle, set, reset];
 }
 
-function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
+function ResizableArea({ id, size, onResize, minHeight = 160, minWidth = 240, children }) {
   const ref = React.useRef(null);
+  const lastRef = React.useRef(size);
+  lastRef.current = size;
 
+  // Only commit a size when the user actually releases the native `resize`
+  // drag handle — reacting to a ResizeObserver tick instead would also fire
+  // on every layout-driven size change (e.g. the browser window resizing),
+  // permanently locking the block to a stale pixel size and defeating the
+  // "shrinks and adapts" requirement for the common, unresized case.
   React.useEffect(() => {
     const el = ref.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(entries => {
-      const h = Math.round(entries[0].contentRect.height);
-      if (h > 0) onResize(id, h);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
+    if (!el) return;
+    const commit = () => {
+      const rect = el.getBoundingClientRect();
+      const w = Math.round(rect.width);
+      const h = Math.round(rect.height);
+      const prev = lastRef.current;
+      if (w !== prev?.w || h !== prev?.h) onResize(id, { w, h });
+    };
+    el.addEventListener('pointerup', commit);
+    return () => el.removeEventListener('pointerup', commit);
   }, [id, onResize]);
 
   return (
@@ -118,10 +151,9 @@ function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
         resize: 'both',
         overflow: 'auto',
         minHeight,
-        minWidth: 280,
-        maxWidth: '100%',
+        minWidth,
         width: '100%',
-        height: height || undefined,
+        height: size?.h || undefined,
         borderRadius: 'var(--r-card)',
       }}
     >
@@ -148,7 +180,7 @@ const EDGE_INDICATOR = {
   bottom: { left: 0, right: 0, bottom: 0, height: 4 },
 };
 
-export function DraggableBlock({ id, dragId, onDragStart, onDropZone, onDragEnd, height, onResize, children, style, ...rest }) {
+export function DraggableBlock({ id, dragId, onDragStart, onDropZone, onDragEnd, size, onResize, onRemove, children, style, ...rest }) {
   const dragging = dragId === id;
   const [overZone, setOverZone] = React.useState(null);
   const isDropSource = dragId != null;
@@ -189,11 +221,21 @@ export function DraggableBlock({ id, dragId, onDragStart, onDropZone, onDragEnd,
         style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', cursor: 'grab', paddingBottom: 'var(--sp-4)', userSelect: 'none' }}
       >
         <Icon name="grip-vertical" size={14} style={{ background: 'var(--text-faint)' }} />
-        <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
+        <span style={{ flex: 1, minWidth: 0, font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
           Перетащите заголовок: край блока — рядом, верх/низ — новая строка
         </span>
+        {onRemove && (
+          <IconButton
+            icon="x"
+            size={22}
+            label="Скрыть блок"
+            onClick={e => { e.stopPropagation(); onRemove(id); }}
+            onDragStart={e => e.stopPropagation()}
+            draggable={false}
+          />
+        )}
       </div>
-      <ResizableArea id={id} height={height} onResize={onResize}>
+      <ResizableArea id={id} size={size} onResize={onResize}>
         {children}
       </ResizableArea>
     </div>
@@ -219,7 +261,7 @@ function moveBlock(rows, dragId, targetId, zone) {
   return next;
 }
 
-export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)', hidden = {} }) {
+export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)', hidden = {}, onRemove }) {
   const [dragId, setDragId] = React.useState(null);
 
   const onDropZone = (targetId, zone) => {
@@ -241,22 +283,31 @@ export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSiz
         const visibleIds = row.filter(id => !hidden[id]);
         if (!visibleIds.length) return null;
         return (
-          <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'nowrap' }}>
-            {visibleIds.map(id => (
-              <div key={id} style={{ flex: '1 1 380px', minWidth: 0 }}>
-                <DraggableBlock
-                  id={id}
-                  dragId={dragId}
-                  onDragStart={setDragId}
-                  onDropZone={onDropZone}
-                  onDragEnd={() => setDragId(null)}
-                  height={sizes[id] ?? defaultSizes[id]}
-                  onResize={onResize}
-                >
-                  {blocks[id]}
-                </DraggableBlock>
-              </div>
-            ))}
+          <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'wrap' }}>
+            {visibleIds.map(id => {
+              // A block the user has never manually resized stays a flexible
+              // flex item (responsive to the row/viewport). One with a saved
+              // width switches to a fixed box at that width, matching the
+              // ResizableArea inside it 1:1 so the drag handle's result holds.
+              const w = sizes[id]?.w;
+              const h = sizes[id]?.h ?? (typeof defaultSizes[id] === 'number' ? defaultSizes[id] : defaultSizes[id]?.h);
+              return (
+                <div key={id} style={{ flex: w ? '0 0 auto' : '1 1 380px', width: w || undefined, minWidth: 240, maxWidth: '100%' }}>
+                  <DraggableBlock
+                    id={id}
+                    dragId={dragId}
+                    onDragStart={setDragId}
+                    onDropZone={onDropZone}
+                    onDragEnd={() => setDragId(null)}
+                    size={{ w, h }}
+                    onResize={onResize}
+                    onRemove={onRemove}
+                  >
+                    {blocks[id]}
+                  </DraggableBlock>
+                </div>
+              );
+            })}
           </div>
         );
       })}

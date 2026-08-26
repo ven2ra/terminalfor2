@@ -348,7 +348,7 @@ export function Instrument() {
             onPriceClick={fillPriceFromBook}
             positionLine={positionLine}
             orderLines={orderLines}
-            height={Math.max(280, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 175)}
+            height={Math.max(280, (sizes.chart?.h ?? DEFAULT_BLOCK_HEIGHTS.chart) - 175)}
           />
         </div>
       </Card>

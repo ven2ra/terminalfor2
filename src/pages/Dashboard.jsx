@@ -5,7 +5,6 @@ import { TopBar } from '../../components/navigation/TopBar.jsx';
 import { TickerStrip } from '../../components/data/TickerStrip.jsx';
 import { Card } from '../../components/core/Card.jsx';
 import { Button } from '../../components/core/Button.jsx';
-import { IconButton } from '../../components/core/IconButton.jsx';
 import { SectionHeader } from '../../components/core/SectionHeader.jsx';
 import { DeltaChip } from '../../components/core/DeltaChip.jsx';
 import { PriceValue } from '../../components/data/PriceValue.jsx';
@@ -17,7 +16,8 @@ import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { PriceChart } from '../PriceChart.jsx';
 import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook } from '../api.js';
 import { NAV_GROUPS } from '../nav.js';
-import { DraggableStack, useBlockRows, useBlockSizes } from '../DraggableBlocks.jsx';
+import { Icon } from '../../components/core/Icon.jsx';
+import { DraggableStack, useBlockRows, useBlockSizes, useWidgetVisibility } from '../DraggableBlocks.jsx';
 import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
 
 const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
@@ -26,12 +26,11 @@ const TIMEFRAMES = [
   { code: '1h', label: '1ч' }, { code: '4h', label: '4ч' }, { code: '1d', label: '1д' },
 ];
 
-const CENTER_KEY = 'tf2_dash_center_v1';
-const RIGHT_KEY = 'tf2_dash_right_v1';
-const DEFAULT_CENTER_ROWS = [['chart'], ['portfolio']];
-const DEFAULT_RIGHT_ROWS = [['order'], ['orderbook']];
-const DEFAULT_CENTER_HEIGHTS = { chart: 460, portfolio: 300 };
-const DEFAULT_RIGHT_HEIGHTS = { order: 460, orderbook: 420 };
+const WORKSPACE_KEY = 'tf2_dash_workspace_v1';
+const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook'];
+const WIDGET_LABELS = { watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель', orderbook: 'Стакан заявок' };
+const DEFAULT_WORKSPACE_ROWS = [['watchlist', 'chart', 'order'], ['portfolio', 'orderbook']];
+const DEFAULT_WORKSPACE_HEIGHTS = { watchlist: 700, chart: 460, order: 460, portfolio: 300, orderbook: 420 };
 
 function fmtRub(n, opts) {
   return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
@@ -42,6 +41,29 @@ function mergeCandles(existing, incoming) {
   const map = new Map(existing.map(c => [c.t, c]));
   for (const c of incoming) map.set(c.t, c);
   return Array.from(map.values()).sort((a, b) => a.t.localeCompare(b.t));
+}
+
+// Flags a brief 'up'/'down' pulse whenever a numeric value ticks — drives the
+// green/red price-flash background on the active instrument's price.
+function usePriceFlash(value) {
+  const [flash, setFlash] = React.useState(null);
+  const prevRef = React.useRef(value);
+
+  React.useEffect(() => {
+    const prev = prevRef.current;
+    if (prev != null && value != null && value !== prev) {
+      setFlash(value > prev ? 'up' : 'down');
+    }
+    prevRef.current = value;
+  }, [value]);
+
+  React.useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 600);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  return flash;
 }
 
 export function Dashboard() {
@@ -66,19 +88,19 @@ export function Dashboard() {
   const [qty, setQty] = React.useState('1');
   const [submitted, setSubmitted] = React.useState(null);
 
-  const [narrow, setNarrow] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < 1100);
+  const [rows, setRows, resetRows] = useBlockRows(WORKSPACE_KEY, DEFAULT_WORKSPACE_ROWS);
+  const [sizes, setSize, resetSizes] = useBlockSizes(WORKSPACE_KEY);
+  const [visible, toggleVisible, setVisible, resetVisible] = useWidgetVisibility(WORKSPACE_KEY, WIDGET_IDS);
+  const [addMenuOpen, setAddMenuOpen] = React.useState(false);
 
-  const [centerRows, setCenterRows] = useBlockRows(CENTER_KEY, DEFAULT_CENTER_ROWS);
-  const [centerSizes, setCenterSize] = useBlockSizes(CENTER_KEY);
-  const [rightRows, setRightRows] = useBlockRows(RIGHT_KEY, DEFAULT_RIGHT_ROWS);
-  const [rightSizes, setRightSize] = useBlockSizes(RIGHT_KEY);
+  const priceFlash = usePriceFlash(info?.priceRaw);
 
-  React.useEffect(() => {
-    const mq = window.matchMedia('(max-width: 1100px)');
-    const handler = e => setNarrow(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
+  const resetLayout = () => {
+    resetRows();
+    resetSizes();
+    resetVisible();
+  };
+  const hiddenWidgetIds = WIDGET_IDS.filter(id => !visible[id]);
 
   // Watchlist: top instruments by today's turnover.
   const loadWatchlist = React.useCallback(async () => {
@@ -224,7 +246,7 @@ export function Dashboard() {
           eyebrow={watchlistError ? `Ошибка: ${watchlistError}` : 'Топ по обороту'}
         />
       </div>
-      <div style={{ overflowY: 'auto', flex: 1 }}>
+      <div style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
@@ -262,12 +284,25 @@ export function Dashboard() {
 
   const chartCard = (
     <Card style={{ padding: 0, overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: 'var(--sp-6) var(--sp-6) 0' }}>
-        <SectionHeader
-          title={active ? active.symbol : 'График'}
-          eyebrow={info ? `${info.name || active.name} · ${fmtRub(info.priceRaw)} ₽` : 'Загрузка…'}
-          actions={<FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TIMEFRAMES.find(t => t.code === tf)?.label} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />}
-        />
+      <div style={{ padding: 'var(--sp-6) var(--sp-6) 0', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 'var(--sp-5)' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)', overflowWrap: 'anywhere' }}>
+            {active ? `${active.symbol} · ${info?.name || active.name || ''}` : 'Выберите инструмент'}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 'var(--sp-5)' }}>
+            <span
+              style={{
+                display: 'inline-block', borderRadius: 'var(--r-md)', padding: '2px var(--sp-4)', margin: '-2px calc(var(--sp-4) * -1)',
+                background: priceFlash === 'up' ? 'var(--positive-soft)' : priceFlash === 'down' ? 'var(--negative-soft)' : 'transparent',
+                transition: 'background-color 550ms ease-out',
+              }}
+            >
+              <PriceValue value={info?.priceRaw} currency="" suffix="₽" size="lg" />
+            </span>
+            {info && <DeltaChip value={info.deltaRaw} showIcon />}
+          </div>
+        </div>
+        <FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TIMEFRAMES.find(t => t.code === tf)?.label} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />
       </div>
       <div style={{ padding: 'var(--sp-5) var(--sp-4) var(--sp-3)', flex: 1, minHeight: 0 }}>
         <PriceChart
@@ -275,7 +310,7 @@ export function Dashboard() {
           candles={candles}
           loading={chartLoading}
           indicators={{ volume: true }}
-          height={Math.max(220, (centerSizes.chart ?? DEFAULT_CENTER_HEIGHTS.chart) - 130)}
+          height={Math.max(220, (sizes.chart?.h ?? DEFAULT_WORKSPACE_HEIGHTS.chart) - 150)}
         />
       </div>
     </Card>
@@ -316,7 +351,7 @@ export function Dashboard() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', overflow: 'auto', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', overflow: 'auto', flex: 1, minHeight: 0 }}>
           {!priced.length && <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Нет открытых позиций</span>}
           {priced.map(p => (
             <div key={p.sym} onClick={() => selectInstrument({ ...p.pos, symbol: p.sym })}
@@ -351,15 +386,15 @@ export function Dashboard() {
           )}
           {needsStop && <AmountField label="Стоп-цена, ₽" value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency="₽" />}
           <AmountField label="Количество" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
-          <div style={{ display: 'flex', gap: 'var(--sp-3)' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
             {[10, 25, 50, 100].map(pct => (
-              <Button key={pct} variant="secondary" size="sm" style={{ flex: 1 }} onClick={() => setQtyFromPercent(pct)}>{pct}%</Button>
+              <Button key={pct} variant="secondary" size="sm" style={{ flex: '1 1 60px' }} onClick={() => setQtyFromPercent(pct)}>{pct}%</Button>
             ))}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', padding: 'var(--sp-5)', background: 'var(--surface-inset)', borderRadius: 'var(--r-lg)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Сумма</span><span>{fmtRub(notional)} ₽</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Комиссия ({(commissionRate() * 100).toFixed(2)}%)</span><span>{fmtRub(commission)} ₽</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', font: 'var(--type-numeric-strong)', color: 'var(--text-primary)', paddingTop: 4, borderTop: '1px solid var(--border-hairline)' }}><span>Итого</span><span>{fmtRub(totalCost)} ₽</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Сумма</span><span>{fmtRub(notional)} ₽</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Комиссия ({(commissionRate() * 100).toFixed(2)}%)</span><span>{fmtRub(commission)} ₽</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-numeric-strong)', color: 'var(--text-primary)', paddingTop: 4, borderTop: '1px solid var(--border-hairline)' }}><span>Итого</span><span>{fmtRub(totalCost)} ₽</span></div>
           </div>
           <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth onClick={submitOrder}>{side} {active.symbol}</Button>
           <Button variant="ghost" size="sm" fullWidth onClick={goToInstrumentPage}>Открыть полную карточку инструмента</Button>
@@ -386,7 +421,7 @@ export function Dashboard() {
         eyebrow={book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано · демо'}
         style={{ paddingBottom: 'var(--sp-5)' }}
       />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-5)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--sp-5)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={bookTh}>Покупка</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
@@ -426,6 +461,8 @@ export function Dashboard() {
     </Card>
   );
 
+  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard };
+
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', background: 'var(--bg-app)' }}>
       <SidebarNav
@@ -442,27 +479,43 @@ export function Dashboard() {
           <TickerStrip items={ticker} />
         </div>
         <main style={{ padding: 'var(--sp-7)' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(240px, 22%) 1fr 1fr', gap: 'var(--sp-7)', alignItems: 'stretch' }}>
-            <div style={{ minHeight: narrow ? 360 : 760 }}>{watchlistCard}</div>
-            <DraggableStack
-              rows={centerRows}
-              onReorder={setCenterRows}
-              blocks={{ chart: chartCard, portfolio: portfolioContent }}
-              sizes={centerSizes}
-              defaultSizes={DEFAULT_CENTER_HEIGHTS}
-              onResize={setCenterSize}
-              gap="var(--sp-7)"
-            />
-            <DraggableStack
-              rows={rightRows}
-              onReorder={setRightRows}
-              blocks={{ order: orderCard, orderbook: orderbookCard }}
-              sizes={rightSizes}
-              defaultSizes={DEFAULT_RIGHT_HEIGHTS}
-              onResize={setRightSize}
-              gap="var(--sp-7)"
-            />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 'var(--sp-4)', paddingBottom: 'var(--sp-6)', position: 'relative' }}>
+            <Button variant="ghost" size="sm" icon="rotate-ccw" onClick={resetLayout}>Сбросить расположение</Button>
+            <div style={{ position: 'relative' }}>
+              <Button variant="secondary" size="sm" icon="plus" onClick={() => setAddMenuOpen(o => !o)}>Добавить виджет</Button>
+              {addMenuOpen && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 40, minWidth: 220,
+                  background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--r-lg)',
+                  boxShadow: 'var(--shadow-popover)', padding: 'var(--sp-3)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {hiddenWidgetIds.length === 0 ? (
+                    <span style={{ padding: '7px 10px', font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Все виджеты уже на экране</span>
+                  ) : (
+                    hiddenWidgetIds.map(id => (
+                      <button key={id} type="button" onClick={() => { setVisible(id, true); setAddMenuOpen(false); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', padding: '7px 10px', borderRadius: 'var(--r-sm)',
+                          border: 'none', cursor: 'pointer', background: 'transparent', color: 'var(--text-body)', font: 'var(--type-body-sm)' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                        <Icon name="plus" size={12} style={{ background: 'var(--text-faint)' }} />
+                        {WIDGET_LABELS[id]}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+          <DraggableStack
+            rows={rows}
+            onReorder={setRows}
+            blocks={blocks}
+            sizes={sizes}
+            defaultSizes={DEFAULT_WORKSPACE_HEIGHTS}
+            onResize={setSize}
+            hidden={Object.fromEntries(WIDGET_IDS.map(id => [id, !visible[id]]))}
+            onRemove={id => toggleVisible(id)}
+            gap="var(--sp-7)"
+          />
         </main>
       </div>
     </div>
