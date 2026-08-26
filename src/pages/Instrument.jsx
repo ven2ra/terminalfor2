@@ -21,7 +21,7 @@ import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commission
 
 const BLOCK_ORDER_KEY = 'tf2_instrument_block_order_v2';
 const DEFAULT_ORDER = ['chart', 'orderbook', 'trades', 'order', 'position', 'news'];
-const DEFAULT_BLOCK_HEIGHTS = { chart: 520, orderbook: 460, trades: 400, order: 480, position: 320, news: 360 };
+const DEFAULT_BLOCK_HEIGHTS = { chart: 600, orderbook: 460, trades: 400, order: 480, position: 320, news: 360 };
 const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
 
 const TIMEFRAMES = [
@@ -81,6 +81,9 @@ export function Instrument() {
   const [sizes, setSize] = useBlockSizes(BLOCK_ORDER_KEY);
   const [tf, setTf] = React.useState('1h');
   const [largeTradesOnly, setLargeTradesOnly] = React.useState(false);
+  const [indicators, setIndicators] = React.useState({ ma: false, ema: false, volume: false, rsi: false, macd: false });
+  const [drawTool, setDrawTool] = React.useState(null);
+  const [drawings, setDrawings] = React.useState([]);
 
   const [side, setSide] = React.useState('Купить');
   const [orderType, setOrderType] = React.useState('Рыночная');
@@ -101,7 +104,24 @@ export function Instrument() {
     setPrice('');
     setStopPrice('');
     setSubmitted(null);
+    setDrawTool(null);
+    try {
+      const saved = JSON.parse(localStorage.getItem(`tf2_drawings_${symbol}`));
+      setDrawings(Array.isArray(saved) ? saved : []);
+    } catch {
+      setDrawings([]);
+    }
   }, [symbol, market, board]);
+
+  const updateDrawings = React.useCallback(
+    next => {
+      setDrawings(next);
+      try {
+        localStorage.setItem(`tf2_drawings_${symbol}`, JSON.stringify(next));
+      } catch {}
+    },
+    [symbol],
+  );
 
   // A timeframe switch also needs a fresh candle history, but shouldn't touch
   // trades/order book/news which are unrelated to the chart's resolution.
@@ -237,6 +257,40 @@ export function Instrument() {
 
   const fillPriceFromBook = p => setPrice(String(p));
 
+  // Hotkeys: B/S = market buy/sell of the current qty, Esc = cancel all
+  // pending orders on this instrument, +/- = qty by one. Disabled while
+  // typing in any field so it doesn't hijack normal text entry.
+  React.useEffect(() => {
+    const handler = e => {
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === 'b' || e.key === 'B') {
+        const result = placeOrder({ symbol, market, board, name: info?.name, side: 'Купить', type: 'Рыночная', qty: qtyNum || 1, lastPrice: info?.priceRaw || 0 });
+        setSubmitted({ ...result, side: 'Купить', type: 'Рыночная', qty: qtyNum || 1, at: new Date() });
+      } else if (e.key === 's' || e.key === 'S') {
+        const result = placeOrder({ symbol, market, board, name: info?.name, side: 'Продать', type: 'Рыночная', qty: qtyNum || 1, lastPrice: info?.priceRaw || 0 });
+        setSubmitted({ ...result, side: 'Продать', type: 'Рыночная', qty: qtyNum || 1, at: new Date() });
+      } else if (e.key === 'Escape') {
+        pendingOrders.forEach(o => cancelOrder(o.id));
+      } else if (e.key === '+' || e.key === '=') {
+        setQty(String((Number(qty) || 0) + 1));
+      } else if (e.key === '-' || e.key === '_') {
+        setQty(String(Math.max(1, (Number(qty) || 1) - 1)));
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [symbol, market, board, info, qty, qtyNum, pendingOrders]);
+
+  const positionLine = position
+    ? { price: position.avgPrice, color: unrealizedPnl >= 0 ? '#4ade80' : '#fb7185', title: `Позиция ${position.qty}` }
+    : null;
+  const orderLines = pendingOrders.map(o => ({
+    price: o.type === 'Стоп-маркет' ? o.stopPrice : o.price,
+    color: o.side === 'Купить' ? '#4ade80' : '#fb7185',
+    title: `${o.side === 'Купить' ? 'Buy' : 'Sell'} ${o.qty}`,
+  }));
+
   const th = { font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)', fontWeight: 'var(--fw-medium)', textAlign: 'left', padding: '0 var(--sp-4) var(--sp-4)' };
   const td = { padding: 'var(--sp-3) var(--sp-4)', font: 'var(--type-numeric)', fontVariantNumeric: 'tabular-nums' };
 
@@ -252,9 +306,32 @@ export function Instrument() {
         <div style={{ padding: 'var(--sp-7) var(--sp-7) 0' }}>
           <SectionHeader
             title="График"
-            eyebrow={`Реальные свечи MOEX · таймфрейм ${TF_LABEL[tf]}`}
+            eyebrow={`Реальные свечи MOEX · таймфрейм ${TF_LABEL[tf]} · B/S — купить/продать по рынку, Esc — снять заявки, +/− — кол-во`}
             actions={<FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TF_LABEL[tf]} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />}
           />
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--sp-5)', padding: 'var(--sp-5) var(--sp-7) 0' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+            {[['ma', 'MA 20'], ['ema', 'EMA 20'], ['volume', 'Объём'], ['rsi', 'RSI'], ['macd', 'MACD']].map(([key, label]) => (
+              <Button
+                key={key}
+                variant={indicators[key] ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setIndicators(p => ({ ...p, [key]: !p[key] }))}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
+          <div style={{ width: 1, height: 20, background: 'var(--border-hairline)' }} />
+          <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+            {[[null, 'Курсор'], ['hline', 'Уровень'], ['trendline', 'Линия'], ['rect', 'Прямоуг.'], ['fib', 'Фибоначчи']].map(([key, label]) => (
+              <Button key={label} variant={drawTool === key ? 'primary' : 'ghost'} size="sm" onClick={() => setDrawTool(key)}>
+                {label}
+              </Button>
+            ))}
+            <Button variant="ghost" size="sm" onClick={() => updateDrawings([])}>Очистить</Button>
+          </div>
         </div>
         <div style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-3)' }}>
           <PriceChart
@@ -264,7 +341,14 @@ export function Instrument() {
             onNearStart={loadEarlierCandles}
             loadingMore={loadingMore}
             reachedStart={reachedStart}
-            height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 130)}
+            indicators={indicators}
+            drawTool={drawTool}
+            drawings={drawings}
+            onDrawingsChange={updateDrawings}
+            onPriceClick={fillPriceFromBook}
+            positionLine={positionLine}
+            orderLines={orderLines}
+            height={Math.max(280, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 175)}
           />
         </div>
       </Card>
