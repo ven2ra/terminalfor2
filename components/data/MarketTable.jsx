@@ -4,7 +4,7 @@ import { DeltaChip } from '../core/DeltaChip.jsx';
 import { Sparkline } from './Sparkline.jsx';
 import { Icon } from '../core/Icon.jsx';
 /** Dense market ledger. Columns: rank, coin, price, three deltas, market cap, volume, chart. */
-export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %'], rankLabel = 'No', nameLabel = 'Coin name', priceLabel = 'Price', marketCapLabel = 'Market Cap', volumeLabel = 'Volume (7D)', chartLabel = 'Chart', style, ...rest }) {
+export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %'], rankLabel = 'No', nameLabel = 'Coin name', priceLabel = 'Price', marketCapLabel = 'Market Cap', volumeLabel = 'Volume (7D)', chartLabel = 'Chart', onRowClick, style, ...rest }) {
   const th = { font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)', fontWeight: 'var(--fw-medium)', textAlign: 'left', padding: '0 var(--sp-6) var(--sp-6)', whiteSpace: 'nowrap' };
   const td = { padding: 'var(--sp-5) var(--sp-6)', borderTop: '1px solid var(--border-hairline)', whiteSpace: 'nowrap' };
   const sortable = label => (
@@ -21,7 +21,8 @@ export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %']
       </tr></thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={r.symbol + i} style={{ transition: 'var(--t-hover)' }}
+          <tr key={r.symbol + i} style={{ transition: 'var(--t-hover)', cursor: onRowClick ? 'pointer' : 'default' }}
+            onClick={onRowClick ? () => onRowClick(r) : undefined}
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
             <td style={{ ...td, font: 'var(--type-numeric)', color: 'var(--text-faint)' }}>#{i + 1}</td>
