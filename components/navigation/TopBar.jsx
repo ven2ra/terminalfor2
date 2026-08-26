@@ -3,7 +3,7 @@ import { Icon } from '../core/Icon.jsx';
 import { IconButton } from '../core/IconButton.jsx';
 import { SearchInput } from '../forms/SearchInput.jsx';
 /** App topbar: breadcrumb, centred search, utility icons, wallet chip. */
-export function TopBar({ crumbs = [], wallet, address, onSearch, searchPlaceholder, style, ...rest }) {
+export function TopBar({ crumbs = [], wallet, address, onSearch, searchPlaceholder, theme, onToggleTheme, style, ...rest }) {
   return (
     <header {...rest} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-9)', height: 'var(--topbar-h)',
       padding: '0 var(--sp-9)', background: 'var(--bg-app)', borderBottom: '1px solid var(--border-hairline)', ...style }}>
@@ -21,6 +21,14 @@ export function TopBar({ crumbs = [], wallet, address, onSearch, searchPlacehold
         <SearchInput width={420} onChange={onSearch} placeholder={searchPlaceholder} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-5)' }}>
+        {onToggleTheme && (
+          <IconButton
+            icon={theme === 'light' ? 'moon' : 'sun'}
+            size={34}
+            label={theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}
+            onClick={onToggleTheme}
+          />
+        )}
         <IconButton icon="message-square" size={34} label="Messages" />
         <IconButton icon="bell" size={34} label="Notifications" dot />
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', paddingLeft: 'var(--sp-5)' }}>

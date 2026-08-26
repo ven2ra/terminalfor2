@@ -19,6 +19,10 @@
       *::-webkit-scrollbar-thumb{background:var(--surface-raised);border-radius:var(--r-pill)}
       *::-webkit-scrollbar-thumb:hover{background:var(--n-600)}
       *::-webkit-scrollbar-corner{background:transparent}
+      /* Price-tick flash: starts at full intensity (the keyframe, not a
+         transition, so it never fades in) and eases out over the run. */
+      @keyframes tf2PriceFlashUp{from{background-color:color-mix(in srgb, var(--positive) 55%, transparent)}to{background-color:transparent}}
+      @keyframes tf2PriceFlashDown{from{background-color:color-mix(in srgb, var(--negative) 55%, transparent)}to{background-color:transparent}}
     </style>
   </head>
   <body>

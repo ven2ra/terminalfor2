@@ -19,6 +19,7 @@ import { NAV_GROUPS } from '../nav.js';
 import { Icon } from '../../components/core/Icon.jsx';
 import { DraggableStack, useBlockRows, useBlockSizes, useWidgetVisibility } from '../DraggableBlocks.jsx';
 import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
+import { useTheme, toggleTheme } from '../theme.js';
 
 const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
 const TIMEFRAMES = [
@@ -44,22 +45,27 @@ function mergeCandles(existing, incoming) {
 }
 
 // Flags a brief 'up'/'down' pulse whenever a numeric value ticks — drives the
-// green/red price-flash background on the active instrument's price.
+// green/red price-flash background on the active instrument's price. `token`
+// changes on every new flash so a CSS animation keyed on it always restarts
+// from full intensity instead of a transition re-fading from wherever the
+// previous one left off.
 function usePriceFlash(value) {
   const [flash, setFlash] = React.useState(null);
   const prevRef = React.useRef(value);
+  const tokenRef = React.useRef(0);
 
   React.useEffect(() => {
     const prev = prevRef.current;
     if (prev != null && value != null && value !== prev) {
-      setFlash(value > prev ? 'up' : 'down');
+      tokenRef.current += 1;
+      setFlash({ dir: value > prev ? 'up' : 'down', token: tokenRef.current });
     }
     prevRef.current = value;
   }, [value]);
 
   React.useEffect(() => {
     if (!flash) return;
-    const t = setTimeout(() => setFlash(null), 600);
+    const t = setTimeout(() => setFlash(null), 700);
     return () => clearTimeout(t);
   }, [flash]);
 
@@ -68,6 +74,7 @@ function usePriceFlash(value) {
 
 export function Dashboard() {
   const account = useDemoAccount();
+  const theme = useTheme();
 
   const [watchlist, setWatchlist] = React.useState([]);
   const [watchlistError, setWatchlistError] = React.useState(null);
@@ -93,32 +100,12 @@ export function Dashboard() {
   const [visible, toggleVisible, setVisible, resetVisible] = useWidgetVisibility(WORKSPACE_KEY, WIDGET_IDS);
   const [addMenuOpen, setAddMenuOpen] = React.useState(false);
 
-  const priceFlash = usePriceFlash(info?.priceRaw);
-
   const resetLayout = () => {
     resetRows();
     resetSizes();
     resetVisible();
   };
   const hiddenWidgetIds = WIDGET_IDS.filter(id => !visible[id]);
-
-  // Watchlist: top instruments by today's turnover.
-  const loadWatchlist = React.useCallback(async () => {
-    try {
-      const rows = await fetchSecurities('shares');
-      setWatchlist(rows);
-      setWatchlistError(null);
-      setActive(prev => prev || (rows[0] ? { symbol: rows[0].symbol, market: rows[0].market, board: rows[0].board, name: rows[0].name } : null));
-    } catch (e) {
-      setWatchlistError(e.message);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    loadWatchlist();
-    const id = setInterval(loadWatchlist, 5000);
-    return () => clearInterval(id);
-  }, [loadWatchlist]);
 
   // Held/pending symbols the watchlist doesn't cover still need a live price
   // for the portfolio widget — fetched individually using the market/board
@@ -143,6 +130,8 @@ export function Dashboard() {
   }, [watchlist, account.positions]);
 
   const getQuote = React.useCallback(symbol => watchlist.find(r => r.symbol === symbol) || extraQuotes[symbol] || null, [watchlist, extraQuotes]);
+  const activeQuote = active ? getQuote(active.symbol) : null;
+  const priceFlash = usePriceFlash(activeQuote?.priceRaw);
 
   const filteredWatchlist = React.useMemo(() => {
     const q = watchlistQuery.trim().toLocaleLowerCase();
@@ -162,45 +151,45 @@ export function Dashboard() {
     setSubmitted(null);
   }, [active?.symbol, active?.market, active?.board]);
 
-  const loadInfo = React.useCallback(async () => {
-    if (!active) return;
+  // Everything the visible UI shows a price for — the ticker, the
+  // instrument list, the chart header and the order form — is fetched in
+  // one shared tick so they can never drift apart from each other by
+  // however long a per-widget poll interval happened to be offset by.
+  const loadAll = React.useCallback(async () => {
     try {
-      const i = await fetchInstrument(active.symbol, active.market, active.board);
-      setInfo(i);
-      setPrice(p => (p ? p : i.priceRaw != null ? String(i.priceRaw) : ''));
-    } catch {
-      // leave stale info in place — the next tick retries
-    }
-  }, [active?.symbol, active?.market, active?.board]);
+      const tasks = [fetchSecurities('shares')];
+      if (active) {
+        tasks.push(
+          fetchInstrument(active.symbol, active.market, active.board),
+          fetchCandles(active.symbol, active.market, active.board, tf),
+          fetchOrderBook(active.symbol, active.market, active.board),
+        );
+      }
+      const [securities, instrumentInfo, candlesResp, bookResp] = await Promise.all(tasks);
 
-  const loadLive = React.useCallback(async () => {
-    if (!active) return;
-    try {
-      const [c, b] = await Promise.all([
-        fetchCandles(active.symbol, active.market, active.board, tf),
-        fetchOrderBook(active.symbol, active.market, active.board),
-      ]);
-      setCandles(prev => mergeCandles(prev, c.candles || []));
-      setChartLoading(false);
-      setBook(b);
-      const lastClose = c.candles?.length ? c.candles[c.candles.length - 1].c : null;
-      if (lastClose) checkPendingOrders(active.symbol, lastClose);
-    } catch {
-      // leave stale data in place — the next tick retries
+      setWatchlist(securities);
+      setWatchlistError(null);
+      setActive(prev => prev || (securities[0] ? { symbol: securities[0].symbol, market: securities[0].market, board: securities[0].board, name: securities[0].name } : null));
+
+      if (active) {
+        setInfo(instrumentInfo);
+        setPrice(p => (p ? p : instrumentInfo.priceRaw != null ? String(instrumentInfo.priceRaw) : ''));
+        setCandles(prev => mergeCandles(prev, candlesResp.candles || []));
+        setChartLoading(false);
+        setBook(bookResp);
+        const lastClose = candlesResp.candles?.length ? candlesResp.candles[candlesResp.candles.length - 1].c : null;
+        if (lastClose) checkPendingOrders(active.symbol, lastClose);
+      }
+    } catch (e) {
+      setWatchlistError(e.message);
     }
   }, [active?.symbol, active?.market, active?.board, tf]);
 
   React.useEffect(() => {
-    loadInfo();
-    const id = setInterval(loadInfo, 10000);
+    loadAll();
+    const id = setInterval(loadAll, 2000);
     return () => clearInterval(id);
-  }, [loadInfo]);
-
-  React.useEffect(() => {
-    loadLive();
-    const id = setInterval(loadLive, 2000);
-    return () => clearInterval(id);
-  }, [loadLive]);
+  }, [loadAll]);
 
   const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: 'RUB' }));
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
@@ -208,7 +197,7 @@ export function Dashboard() {
   const lotSize = info?.lotSize || 1;
   const isMarket = orderType === 'Рыночная';
   const needsStop = orderType === 'Стоп-лимит' || orderType === 'Стоп-маркет';
-  const effectivePrice = isMarket ? info?.priceRaw || 0 : Number(price) || 0;
+  const effectivePrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || 0;
   const qtyNum = Number(qty) || 0;
   const notional = effectivePrice * qtyNum * lotSize;
   const commission = notional * commissionRate();
@@ -222,7 +211,7 @@ export function Dashboard() {
       setQty(String(Math.max(1, Math.floor((held * pct) / 100))));
       return;
     }
-    const refPrice = isMarket ? info?.priceRaw || 0 : Number(price) || info?.priceRaw || 0;
+    const refPrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || activeQuote?.priceRaw || 0;
     if (!refPrice) return;
     const budget = (account.cash * pct) / 100;
     setQty(String(Math.max(1, Math.floor(budget / (refPrice * lotSize)))));
@@ -231,8 +220,8 @@ export function Dashboard() {
   const submitOrder = () => {
     if (!active) return;
     const result = placeOrder({
-      symbol: active.symbol, market: active.market, board: active.board, name: info?.name || active.name,
-      side, type: orderType, qty: qtyNum, price: Number(price) || 0, stopPrice: Number(stopPrice) || 0, lastPrice: info?.priceRaw || 0,
+      symbol: active.symbol, market: active.market, board: active.board, name: activeQuote?.name || info?.name || active.name,
+      side, type: orderType, qty: qtyNum, price: Number(price) || 0, stopPrice: Number(stopPrice) || 0, lastPrice: activeQuote?.priceRaw || 0,
     });
     setSubmitted({ ...result, side, type: orderType, qty: qtyNum, at: new Date() });
   };
@@ -302,19 +291,19 @@ export function Dashboard() {
       <div style={{ padding: 'var(--sp-6) var(--sp-6) 0', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 'var(--sp-5)' }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)', overflowWrap: 'anywhere' }}>
-            {active ? `${active.symbol} · ${info?.name || active.name || ''}` : 'Выберите инструмент'}
+            {active ? `${active.symbol} · ${activeQuote?.name || info?.name || active.name || ''}` : 'Выберите инструмент'}
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', flexWrap: 'wrap', gap: 'var(--sp-5)' }}>
             <span
+              key={priceFlash?.token || 'idle'}
               style={{
                 display: 'inline-block', borderRadius: 'var(--r-md)', padding: '2px var(--sp-4)', margin: '-2px calc(var(--sp-4) * -1)',
-                background: priceFlash === 'up' ? 'var(--positive-soft)' : priceFlash === 'down' ? 'var(--negative-soft)' : 'transparent',
-                transition: 'background-color 550ms ease-out',
+                animation: priceFlash ? `${priceFlash.dir === 'up' ? 'tf2PriceFlashUp' : 'tf2PriceFlashDown'} 700ms ease-out` : 'none',
               }}
             >
-              <PriceValue value={info?.priceRaw} currency="" suffix="₽" size="lg" />
+              <PriceValue value={activeQuote?.priceRaw} currency="" suffix="₽" size="lg" />
             </span>
-            {info && <DeltaChip value={info.deltaRaw} showIcon />}
+            {activeQuote && <DeltaChip value={activeQuote.deltaRaw} showIcon />}
           </div>
         </div>
         <FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TIMEFRAMES.find(t => t.code === tf)?.label} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />
@@ -489,7 +478,13 @@ export function Dashboard() {
       />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-app)' }}>
-          <TopBar wallet="Демо-счёт" address="MOEX ISS" searchPlaceholder="Поиск инструмента..." />
+          <TopBar
+            wallet="Демо-счёт"
+            address="MOEX ISS"
+            searchPlaceholder="Поиск инструмента..."
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
           <TickerStrip items={ticker} />
         </div>
         <main style={{ padding: 'var(--sp-7)' }}>

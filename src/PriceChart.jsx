@@ -1,6 +1,16 @@
 import React from 'react';
 import { createChart, CandlestickSeries, LineSeries, HistogramSeries, ColorType } from 'lightweight-charts';
 import { sma, ema, rsi, macd } from './indicators.js';
+import { useTheme } from './theme.js';
+
+// lightweight-charts takes plain color strings via its own options object,
+// not CSS custom properties — these can't just ride the --token cascade like
+// the rest of the UI, so the grid/axis colors are recomputed by hand here
+// whenever the theme flips.
+const CHART_THEME = {
+  dark: { text: '#8b90a0', grid: 'rgba(255,255,255,.05)', axis: 'rgba(255,255,255,.06)' },
+  light: { text: '#565c6b', grid: 'rgba(10,12,20,.07)', axis: 'rgba(10,12,20,.1)' },
+};
 
 /** Deterministic candlestick silhouette shown while real data loads — no jitter on re-render. */
 function ChartSkeleton() {
@@ -67,23 +77,28 @@ export function PriceChart({
   const orderLineRefsRef = React.useRef([]);
   const priceLineDrawingsRef = React.useRef(new Map());
 
+  const theme = useTheme();
+  const themeRef = React.useRef(theme);
+  themeRef.current = theme;
+
   React.useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
+    const ct = CHART_THEME[themeRef.current] || CHART_THEME.dark;
     const chart = createChart(host, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#8b90a0',
+        textColor: ct.text,
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,.05)' },
-        horzLines: { color: 'rgba(255,255,255,.05)' },
+        vertLines: { color: ct.grid },
+        horzLines: { color: ct.grid },
       },
-      timeScale: { borderColor: 'rgba(255,255,255,.06)', timeVisible: true },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,.06)' },
+      timeScale: { borderColor: ct.axis, timeVisible: true },
+      rightPriceScale: { borderColor: ct.axis },
       crosshair: { mode: 0 },
     });
     const series = chart.addSeries(CandlestickSeries, {
@@ -230,6 +245,20 @@ export function PriceChart({
       overlaySeriesRef.current = {};
     };
   }, []);
+
+  // Theme toggle: recolor the axes/grid in place via applyOptions rather than
+  // tearing the chart down, so the user's current zoom/pan position survives.
+  React.useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const ct = CHART_THEME[theme] || CHART_THEME.dark;
+    chart.applyOptions({
+      layout: { textColor: ct.text },
+      grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
+      timeScale: { borderColor: ct.axis },
+      rightPriceScale: { borderColor: ct.axis },
+    });
+  }, [theme]);
 
   // Native chart click also fills the order-ticket price (outside drawing mode).
   React.useEffect(() => {

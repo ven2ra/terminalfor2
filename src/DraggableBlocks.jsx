@@ -272,7 +272,12 @@ export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSiz
 
   return (
     <div
-      style={{ display: 'flex', flexDirection: 'column', gap }}
+      // `minHeight` keeps this the drop target for the whole visible
+      // workspace, not just the box its current rows happen to fill — with a
+      // short layout (few rows, or all short blocks) the leftover page space
+      // below them would otherwise have no drag listener at all and silently
+      // swallow the drop.
+      style={{ display: 'flex', flexDirection: 'column', gap, minHeight: 'calc(100vh - 220px)' }}
       onDragOver={e => e.preventDefault()}
       onDrop={e => {
         e.preventDefault();
@@ -282,8 +287,22 @@ export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSiz
       {rows.map(row => {
         const visibleIds = row.filter(id => !hidden[id]);
         if (!visibleIds.length) return null;
+        const lastId = visibleIds[visibleIds.length - 1];
         return (
-          <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'wrap' }}>
+          <div
+            key={row.join('|')}
+            style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'wrap' }}
+            // Catches a drop on this row's own background — the gap between
+            // blocks, or the leftover space after the last one — and appends
+            // the dragged block to the end of THIS row, instead of letting it
+            // bubble up and jump to the very end of the whole stack.
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDropZone(lastId, 'right');
+            }}
+          >
             {visibleIds.map(id => {
               // A block the user has never manually resized stays a flexible
               // flex item (responsive to the row/viewport). One with a saved
