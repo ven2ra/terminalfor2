@@ -178,11 +178,25 @@ export function Dashboard() {
       if (active) {
         setInfo(instrumentInfo);
         setPrice(p => (p ? p : instrumentInfo.priceRaw != null ? String(instrumentInfo.priceRaw) : ''));
-        setCandles(prev => mergeCandles(prev, candlesResp.candles || []));
+
+        // MOEX's own candles.json lags the instant last-trade price by up to
+        // a full bar (on 1m it can sit a whole minute behind, since a bar
+        // only reflects trades already bucketed into it) — that's what
+        // showed up as the chart's price line trailing the header number.
+        // Patch the live price straight onto the last (still-forming) bar so
+        // the chart always agrees with the same number everything else shows.
+        const livePrice = instrumentInfo.priceRaw;
+        setCandles(prev => {
+          let merged = mergeCandles(prev, candlesResp.candles || []);
+          if (livePrice != null && merged.length) {
+            const last = merged[merged.length - 1];
+            merged = [...merged.slice(0, -1), { ...last, c: livePrice, h: Math.max(last.h, livePrice), l: Math.min(last.l, livePrice) }];
+          }
+          return merged;
+        });
         setChartLoading(false);
         setBook(bookResp);
-        const lastClose = candlesResp.candles?.length ? candlesResp.candles[candlesResp.candles.length - 1].c : null;
-        if (lastClose) checkPendingOrders(active.symbol, lastClose);
+        if (livePrice != null) checkPendingOrders(active.symbol, livePrice);
       }
     } catch (e) {
       setWatchlistError(e.message);
