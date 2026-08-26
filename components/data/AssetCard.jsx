@@ -6,7 +6,7 @@ import { CoinMark, COIN_COLOR } from './CoinMark.jsx';
 import { PriceValue } from './PriceValue.jsx';
 import { Sparkline } from './Sparkline.jsx';
 /** Watch-tile for one trading pair: identity, price, delta and a glowing sparkline. */
-export function AssetCard({ symbol, name, pair, price, delta, series = [], onMenu, style, ...rest }) {
+export function AssetCard({ symbol, name, pair, price, delta, series = [], currency = '$', suffix, priceLabel = 'Price', menuLabel, onMenu, style, ...rest }) {
   const tone = delta >= 0 ? 'up' : 'down';
   return (
     <Card interactive glow={tone} padding="var(--pad-card)" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-6)', ...style }} {...rest}>
@@ -16,13 +16,13 @@ export function AssetCard({ symbol, name, pair, price, delta, series = [], onMen
           <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>{pair}</span>
           <span style={{ font: 'var(--type-h3)', color: 'var(--text-primary)' }}>{name}</span>
         </div>
-        <IconButton icon="ellipsis-vertical" size={26} label={`${name} actions`} onClick={onMenu} />
+        <IconButton icon="ellipsis-vertical" size={26} label={menuLabel || `${name} actions`} onClick={onMenu} />
       </div>
       <div style={{ display: 'flex', gap: 'var(--sp-5)' }}>
         <span style={{ width: 'var(--bw-accent-tick)', borderRadius: 'var(--r-pill)', background: COIN_COLOR[String(symbol).toLowerCase()] || 'var(--accent)' }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
-          <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>Price</span>
-          <PriceValue value={price} />
+          <span style={{ font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>{priceLabel}</span>
+          <PriceValue value={price} currency={currency} suffix={suffix} />
           <DeltaChip value={delta} showIcon style={{ alignSelf: 'flex-start', marginTop: 2 }} />
         </div>
       </div>

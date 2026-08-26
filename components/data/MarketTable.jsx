@@ -4,7 +4,7 @@ import { DeltaChip } from '../core/DeltaChip.jsx';
 import { Sparkline } from './Sparkline.jsx';
 import { Icon } from '../core/Icon.jsx';
 /** Dense market ledger. Columns: rank, coin, price, three deltas, market cap, volume, chart. */
-export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %'], style, ...rest }) {
+export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %'], rankLabel = 'No', nameLabel = 'Coin name', priceLabel = 'Price', marketCapLabel = 'Market Cap', volumeLabel = 'Volume (7D)', chartLabel = 'Chart', style, ...rest }) {
   const th = { font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)', fontWeight: 'var(--fw-medium)', textAlign: 'left', padding: '0 var(--sp-6) var(--sp-6)', whiteSpace: 'nowrap' };
   const td = { padding: 'var(--sp-5) var(--sp-6)', borderTop: '1px solid var(--border-hairline)', whiteSpace: 'nowrap' };
   const sortable = label => (
@@ -13,11 +13,11 @@ export function MarketTable({ rows = [], deltaLabels = ['1H %', '24H %', '7D %']
   return (
     <table {...rest} style={{ width: '100%', borderCollapse: 'collapse', ...style }}>
       <thead><tr>
-        <th style={th}>No</th><th style={th}>{sortable('Coin name')}</th><th style={{ ...th, textAlign: 'right' }}>{sortable('Price')}</th>
+        <th style={th}>{rankLabel}</th><th style={th}>{sortable(nameLabel)}</th><th style={{ ...th, textAlign: 'right' }}>{sortable(priceLabel)}</th>
         {deltaLabels.map(l => <th key={l} style={{ ...th, textAlign: 'center' }}>{l}</th>)}
-        <th style={{ ...th, textAlign: 'right' }}>{sortable('Market Cap')}</th>
-        <th style={{ ...th, textAlign: 'right' }}>{sortable('Volume (7D)')}</th>
-        <th style={{ ...th, textAlign: 'right' }}>Chart</th>
+        <th style={{ ...th, textAlign: 'right' }}>{sortable(marketCapLabel)}</th>
+        <th style={{ ...th, textAlign: 'right' }}>{sortable(volumeLabel)}</th>
+        <th style={{ ...th, textAlign: 'right' }}>{chartLabel}</th>
       </tr></thead>
       <tbody>
         {rows.map((r, i) => (

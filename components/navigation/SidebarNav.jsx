@@ -2,7 +2,7 @@ import React from 'react';
 import { Icon } from '../core/Icon.jsx';
 import { Badge } from '../core/Badge.jsx';
 /** The left rail: brand lockup, greeting, grouped nav sections, log out. */
-export function SidebarNav({ brand = 'Terminalfor', tagline = 'AI-Powered Trading', greeting, meta, groups = [], active, onSelect, onCollapse, footer, style, ...rest }) {
+export function SidebarNav({ brand = 'Terminalfor', tagline = 'AI-Powered Trading', greeting, meta, groups = [], active, onSelect, onCollapse, footer, logoutLabel = 'Log out', style, ...rest }) {
   return (
     <nav {...rest} style={{ width: 'var(--rail-w)', flex: '0 0 auto', display: 'flex', flexDirection: 'column',
       background: 'var(--bg-rail)', borderRight: '1px solid var(--border-hairline)', padding: 'var(--sp-7) var(--sp-6)', ...style }}>
@@ -53,7 +53,7 @@ export function SidebarNav({ brand = 'Terminalfor', tagline = 'AI-Powered Tradin
         <button type="button" style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-6)', height: 36, width: '100%',
           padding: '0 var(--sp-5)', background: 'transparent', border: 'none', cursor: 'pointer',
           color: 'var(--text-muted)', font: 'var(--type-body-sm)', fontWeight: 'var(--fw-medium)' }}>
-          <Icon name="log-out" size={16} />Log out
+          <Icon name="log-out" size={16} />{logoutLabel}
         </button>
       )}</div>
     </nav>
