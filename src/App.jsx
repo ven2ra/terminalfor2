@@ -1,14 +1,15 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard.jsx';
-import { Instrument } from './pages/Instrument.jsx';
 
 export function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Dashboard />} />
-        <Route path="/instrument/:market/:board/:symbol" element={<Instrument />} />
+        {/* The instrument detail page was folded into the trading workspace —
+            redirect any old bookmarked/shared link there instead of 404ing. */}
+        <Route path="/instrument/*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

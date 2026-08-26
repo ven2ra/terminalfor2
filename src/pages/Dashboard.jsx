@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { SidebarNav } from '../../components/navigation/SidebarNav.jsx';
 import { TopBar } from '../../components/navigation/TopBar.jsx';
 import { TickerStrip } from '../../components/data/TickerStrip.jsx';
@@ -13,6 +12,7 @@ import { SegmentedControl } from '../../components/forms/SegmentedControl.jsx';
 import { SelectMenu } from '../../components/forms/SelectMenu.jsx';
 import { AmountField } from '../../components/forms/AmountField.jsx';
 import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
+import { SearchInput } from '../../components/forms/SearchInput.jsx';
 import { PriceChart } from '../PriceChart.jsx';
 import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook } from '../api.js';
 import { NAV_GROUPS } from '../nav.js';
@@ -67,11 +67,11 @@ function usePriceFlash(value) {
 }
 
 export function Dashboard() {
-  const navigate = useNavigate();
   const account = useDemoAccount();
 
   const [watchlist, setWatchlist] = React.useState([]);
   const [watchlistError, setWatchlistError] = React.useState(null);
+  const [watchlistQuery, setWatchlistQuery] = React.useState('');
   const [active, setActive] = React.useState(null); // { symbol, market, board, name }
   const [extraQuotes, setExtraQuotes] = React.useState({});
 
@@ -144,6 +144,12 @@ export function Dashboard() {
 
   const getQuote = React.useCallback(symbol => watchlist.find(r => r.symbol === symbol) || extraQuotes[symbol] || null, [watchlist, extraQuotes]);
 
+  const filteredWatchlist = React.useMemo(() => {
+    const q = watchlistQuery.trim().toLocaleLowerCase();
+    if (!q) return watchlist;
+    return watchlist.filter(r => r.symbol.toLocaleLowerCase().includes(q) || (r.name || '').toLocaleLowerCase().includes(q));
+  }, [watchlist, watchlistQuery]);
+
   // Switching the active instrument resets everything specific to it.
   React.useEffect(() => {
     if (!active) return;
@@ -198,7 +204,6 @@ export function Dashboard() {
 
   const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: 'RUB' }));
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
-  const goToInstrumentPage = () => active && navigate(`/instrument/${active.market || 'shares'}/${active.board || 'TQBR'}/${active.symbol}`);
 
   const lotSize = info?.lotSize || 1;
   const isMarket = orderType === 'Рыночная';
@@ -238,12 +243,19 @@ export function Dashboard() {
 
   const watchlistCard = (
     <Card style={{ padding: 0, overflow: 'hidden', height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: 'var(--sp-6) var(--sp-6) var(--sp-4)' }}>
+      <div style={{ padding: 'var(--sp-6) var(--sp-6) var(--sp-4)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
         <SectionHeader
           title="Инструменты"
           size="sm"
           live={!watchlistError}
           eyebrow={watchlistError ? `Ошибка: ${watchlistError}` : 'Топ по обороту'}
+        />
+        <SearchInput
+          value={watchlistQuery}
+          onChange={e => setWatchlistQuery(e.target.value)}
+          placeholder="Тикер или название..."
+          shortcut={null}
+          width="100%"
         />
       </div>
       <div style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
@@ -257,7 +269,10 @@ export function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {watchlist.map(r => {
+            {filteredWatchlist.length === 0 && (
+              <tr><td colSpan={4} style={{ ...bookTd, textAlign: 'center', color: 'var(--text-faint)', padding: 'var(--sp-7)' }}>Ничего не найдено</td></tr>
+            )}
+            {filteredWatchlist.map(r => {
               const isActive = active && active.symbol === r.symbol;
               return (
                 <tr key={r.symbol} onClick={() => selectInstrument(r)}
@@ -397,7 +412,6 @@ export function Dashboard() {
             <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-numeric-strong)', color: 'var(--text-primary)', paddingTop: 4, borderTop: '1px solid var(--border-hairline)' }}><span>Итого</span><span>{fmtRub(totalCost)} ₽</span></div>
           </div>
           <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth onClick={submitOrder}>{side} {active.symbol}</Button>
-          <Button variant="ghost" size="sm" fullWidth onClick={goToInstrumentPage}>Открыть полную карточку инструмента</Button>
           {submitted && (
             <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: submitted.ok ? 'var(--text-faint)' : 'var(--negative)' }}>
               {submitted.ok
