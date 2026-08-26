@@ -13,11 +13,19 @@ function ChartSkeleton({ height }) {
   );
 }
 
+function toBar(c) {
+  return { time: Math.floor(new Date(c.t.replace(' ', 'T') + 'Z').getTime() / 1000), open: c.o, high: c.h, low: c.l, close: c.c };
+}
+
 /** Real MOEX candles rendered with TradingView's open-source lightweight-charts library — our own data, no hosted widget, no external attribution required. */
-export function PriceChart({ candles = [], loading, height = 420, resetKey }) {
+export function PriceChart({ candles = [], loading, height = 420, resetKey, onNearStart, loadingMore, reachedStart }) {
   const hostRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const seriesRef = React.useRef(null);
+  const firstBarTimeRef = React.useRef(null);
+  const lastBarTimeRef = React.useRef(null);
+  const onNearStartRef = React.useRef(onNearStart);
+  onNearStartRef.current = onNearStart;
 
   React.useEffect(() => {
     const host = hostRef.current;
@@ -46,6 +54,12 @@ export function PriceChart({ candles = [], loading, height = 420, resetKey }) {
       wickDownColor: 'rgba(239,68,68,.55)',
     });
 
+    // Scrolling/zooming near the left edge of what's loaded asks the parent
+    // for an earlier page of history (see Instrument.jsx's loadEarlierCandles).
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (range && range.from < 10) onNearStartRef.current?.();
+    });
+
     chartRef.current = chart;
     seriesRef.current = series;
 
@@ -56,33 +70,44 @@ export function PriceChart({ candles = [], loading, height = 420, resetKey }) {
     };
   }, []);
 
-  const lastBarTimeRef = React.useRef(null);
-
   React.useEffect(() => {
     if (!seriesRef.current || !candles.length) return;
-    const data = candles
-      .map(c => ({ time: Math.floor(new Date(c.t.replace(' ', 'T') + 'Z').getTime() / 1000), open: c.o, high: c.h, low: c.l, close: c.c }))
-      .filter(d => Number.isFinite(d.time))
-      .sort((a, b) => a.time - b.time);
+    const data = candles.map(toBar).filter(d => Number.isFinite(d.time)).sort((a, b) => a.time - b.time);
+    const first = data[0].time;
+    const last = data[data.length - 1].time;
 
-    // First load (or a symbol switch resetting the series): seed the whole
-    // history and fit the view once. Every later poll only pushes the most
-    // recent bar via update() — a full setData() would reset the user's zoom
-    // and pan on every 2s refresh, which reads as the chart "jumping".
     if (lastBarTimeRef.current == null) {
+      // First load (or a symbol/timeframe switch that reset the series): seed
+      // the whole history and fit the view once.
       seriesRef.current.setData(data);
       chartRef.current?.timeScale().fitContent();
+    } else if (first < firstBarTimeRef.current) {
+      // An earlier page was prepended by a scroll-back load — replace the
+      // full dataset, then shift the visible logical range by exactly how
+      // many bars were added at the front so the view doesn't jump.
+      const prevRange = chartRef.current?.timeScale().getVisibleLogicalRange();
+      const oldFirstIdx = data.findIndex(d => d.time === firstBarTimeRef.current);
+      const added = oldFirstIdx === -1 ? 0 : oldFirstIdx;
+      seriesRef.current.setData(data);
+      if (prevRange && added > 0) {
+        chartRef.current?.timeScale().setVisibleLogicalRange({ from: prevRange.from + added, to: prevRange.to + added });
+      }
     } else {
+      // Routine live tick: a full setData() would reset the user's zoom/pan
+      // on every 2s refresh, which reads as the chart "jumping" — only push
+      // the latest bar.
       seriesRef.current.update(data[data.length - 1]);
     }
-    lastBarTimeRef.current = data[data.length - 1]?.time ?? lastBarTimeRef.current;
+    firstBarTimeRef.current = first;
+    lastBarTimeRef.current = last;
   }, [candles]);
 
   // The chart instance is created once and reused across symbol/timeframe
   // changes (the Instrument page doesn't remount) — force a full re-seed
-  // whenever resetKey changes so we don't try to "update" a leftover bar
-  // from the previous instrument or timeframe.
+  // whenever resetKey changes so we don't try to "update"/"prepend" against
+  // a leftover bar from the previous instrument or timeframe.
   React.useEffect(() => {
+    firstBarTimeRef.current = null;
     lastBarTimeRef.current = null;
     seriesRef.current?.setData([]);
   }, [resetKey]);
@@ -90,6 +115,28 @@ export function PriceChart({ candles = [], loading, height = 420, resetKey }) {
   return (
     <div style={{ position: 'relative', height, width: '100%' }}>
       {loading && candles.length === 0 && <ChartSkeleton height={height} />}
+      {loadingMore && (
+        <span
+          style={{
+            position: 'absolute', left: 'var(--sp-5)', top: 'var(--sp-4)', zIndex: 2,
+            padding: '4px 10px', borderRadius: 'var(--r-pill)', background: 'var(--surface-raised)',
+            border: '1px solid var(--border-hairline)', font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
+          }}
+        >
+          Загрузка истории…
+        </span>
+      )}
+      {reachedStart && !loadingMore && (
+        <span
+          style={{
+            position: 'absolute', left: 'var(--sp-5)', top: 'var(--sp-4)', zIndex: 2,
+            padding: '4px 10px', borderRadius: 'var(--r-pill)', background: 'var(--surface-raised)',
+            border: '1px solid var(--border-hairline)', font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
+          }}
+        >
+          Начало истории торгов
+        </span>
+      )}
       <div ref={hostRef} style={{ height: '100%', width: '100%' }} />
     </div>
   );

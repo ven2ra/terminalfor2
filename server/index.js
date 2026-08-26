@@ -80,8 +80,7 @@ async function loadOneSecurity(market, board, symbol) {
   };
 }
 
-async function loadCandlesFull(market, board, symbol, days = 5, interval = 60) {
-  const till = new Date();
+async function loadCandlesFull(market, board, symbol, days = 5, interval = 60, till = new Date()) {
   const from = new Date(till.getTime() - days * 24 * 3600 * 1000);
   const fmt = d => d.toISOString().slice(0, 10);
   const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/candles.json?interval=${interval}&from=${fmt(from)}&till=${fmt(till)}&iss.meta=off`;
@@ -215,10 +214,14 @@ app.get('/api/candles/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const tf = TIMEFRAMES[req.query.tf] ? req.query.tf.toString() : '1h';
   const cfg = TIMEFRAMES[tf];
+  // `before` pages further back in history for the chart's lazy-load-on-scroll —
+  // omit it for the normal "recent window" request.
+  const before = req.query.before ? new Date(req.query.before.toString().replace(' ', 'T') + 'Z') : new Date();
   try {
-    const raw = await loadCandlesFull(market, board, symbol, cfg.days, cfg.interval);
+    const raw = await loadCandlesFull(market, board, symbol, cfg.days, cfg.interval, before);
     const candles = aggregateCandles(raw, cfg.group);
-    res.json({ symbol, tf, series: candles.map(c => c.c).slice(-40), candles: candles.slice(-300) });
+    const page = req.query.before ? candles : candles.slice(-300);
+    res.json({ symbol, tf, series: candles.map(c => c.c).slice(-40), candles: page, hasMore: candles.length > 0 });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }

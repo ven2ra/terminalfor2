@@ -34,6 +34,16 @@ const TIMEFRAMES = [
 ];
 const TF_LABEL = Object.fromEntries(TIMEFRAMES.map(t => [t.code, t.label]));
 
+// Merges two candle arrays (each already sorted ascending by `t`) keyed by
+// their timestamp string, so a fresh "recent window" poll updates the tail
+// without discarding earlier history a scroll-back load prepended.
+function mergeCandles(existing, incoming) {
+  if (!incoming.length) return existing;
+  const map = new Map(existing.map(c => [c.t, c]));
+  for (const c of incoming) map.set(c.t, c);
+  return Array.from(map.values()).sort((a, b) => a.t.localeCompare(b.t));
+}
+
 function fmtTime(iso) {
   try {
     return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -48,6 +58,12 @@ export function Instrument() {
   const [info, setInfo] = React.useState(null);
   const [candles, setCandles] = React.useState([]);
   const [chartLoading, setChartLoading] = React.useState(true);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [reachedStart, setReachedStart] = React.useState(false);
+  const candlesRef = React.useRef(candles);
+  candlesRef.current = candles;
+  const inFlightRef = React.useRef(false);
+  const reachedStartRef = React.useRef(false);
   const [trades, setTrades] = React.useState([]);
   const [book, setBook] = React.useState({ bids: [], asks: [] });
   const [news, setNews] = React.useState([]);
@@ -79,7 +95,40 @@ export function Instrument() {
   React.useEffect(() => {
     setCandles([]);
     setChartLoading(true);
-  }, [tf]);
+    setReachedStart(false);
+    setLoadingMore(false);
+    reachedStartRef.current = false;
+    inFlightRef.current = false;
+  }, [tf, symbol, market, board]);
+
+  // Scrolling the chart back near its earliest loaded bar asks for the page
+  // before it — keeps going until the API returns nothing (start of the
+  // instrument's trading history), so a user can, in principle, pan all the
+  // way back to when it started trading.
+  const loadEarlierCandles = React.useCallback(async () => {
+    // A ref guard (not state) — subscribeVisibleLogicalRangeChange can fire
+    // several times within one render tick while dragging, and state updates
+    // aren't synchronous enough to block the second call.
+    if (inFlightRef.current || reachedStartRef.current || !candlesRef.current.length) return;
+    inFlightRef.current = true;
+    setLoadingMore(true);
+    try {
+      const earliest = candlesRef.current[0].t;
+      const c = await fetchCandles(symbol, market, board, tf, earliest);
+      const got = c.candles || [];
+      if (!got.length) {
+        reachedStartRef.current = true;
+        setReachedStart(true);
+      } else {
+        setCandles(prev => mergeCandles(prev, got));
+      }
+    } catch {
+      // leave state as-is — the user can scroll again to retry
+    } finally {
+      inFlightRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [symbol, market, board, tf]);
 
   // Instrument info + news barely change — a slow poll is enough.
   const load = React.useCallback(async () => {
@@ -103,7 +152,7 @@ export function Instrument() {
         fetchTrades(symbol, market, board),
         fetchOrderBook(symbol, market, board),
       ]);
-      setCandles(c.candles || []);
+      setCandles(prev => mergeCandles(prev, c.candles || []));
       setChartLoading(false);
       setTrades(t);
       setBook(b);
@@ -145,7 +194,15 @@ export function Instrument() {
           />
         </div>
         <div style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-3)' }}>
-          <PriceChart resetKey={`${symbol}-${tf}`} candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 130)} />
+          <PriceChart
+            resetKey={`${symbol}-${tf}`}
+            candles={candles}
+            loading={chartLoading}
+            onNearStart={loadEarlierCandles}
+            loadingMore={loadingMore}
+            reachedStart={reachedStart}
+            height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 130)}
+          />
         </div>
       </Card>
     ),
