@@ -192,9 +192,7 @@ function FreeBlock({ id, pos, containerRef, onMoveEnd, onResizeEnd, onDragZ, onR
         style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', cursor: dragging ? 'grabbing' : 'grab', paddingBottom: 'var(--sp-4)', userSelect: 'none', touchAction: 'none' }}
       >
         <Icon name="grip-vertical" size={14} style={{ background: 'var(--text-faint)' }} />
-        <span style={{ flex: 1, minWidth: 0, font: 'var(--type-eyebrow)', letterSpacing: 'var(--ls-label)', color: 'var(--text-faint)' }}>
-          Перетащите в любое место — блоки не привязаны друг к другу
-        </span>
+        <span style={{ flex: 1, minWidth: 0 }} />
         {onRemove && (
           <IconButton
             icon="x"

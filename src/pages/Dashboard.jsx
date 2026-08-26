@@ -1,5 +1,4 @@
 import React from 'react';
-import { SidebarNav } from '../../components/navigation/SidebarNav.jsx';
 import { TopBar } from '../../components/navigation/TopBar.jsx';
 import { TickerStrip } from '../../components/data/TickerStrip.jsx';
 import { Card } from '../../components/core/Card.jsx';
@@ -16,7 +15,6 @@ import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { SearchInput } from '../../components/forms/SearchInput.jsx';
 import { PriceChart } from '../PriceChart.jsx';
 import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook, fetchBondEvents, fetchKeyRate } from '../api.js';
-import { NAV_GROUPS } from '../nav.js';
 import { Icon } from '../../components/core/Icon.jsx';
 import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
 import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
@@ -650,18 +648,12 @@ export function Dashboard() {
   const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard, margin: marginCard };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', background: 'var(--bg-app)' }}>
-      <SidebarNav
-        greeting="Terminalfor"
-        meta="MOEX · Акции TQBR"
-        groups={NAV_GROUPS}
-        active="dashboard"
-        logoutLabel="Выйти"
-        style={{ position: 'sticky', top: 0, height: '100vh' }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-app)' }}>
-          <TopBar
+    <div style={{ background: 'var(--bg-app)' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-app)' }}>
+        <div style={{ padding: 'var(--sp-5) var(--sp-9) 0' }}>
+          <span style={{ font: 'var(--type-h3)', fontSize: 'var(--fs-base)', letterSpacing: 'var(--ls-heading)', color: 'var(--text-primary)' }}>Terminalfor</span>
+        </div>
+        <TopBar
             wallet="Демо-счёт"
             address="MOEX ISS"
             searchPlaceholder="Поиск инструмента..."
@@ -715,7 +707,6 @@ export function Dashboard() {
             onRemove={id => toggleVisible(id)}
           />
         </main>
-      </div>
     </div>
   );
 }
