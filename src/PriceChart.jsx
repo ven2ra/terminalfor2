@@ -14,7 +14,7 @@ function ChartSkeleton({ height }) {
 }
 
 /** Real MOEX candles rendered with TradingView's open-source lightweight-charts library — our own data, no hosted widget, no external attribution required. */
-export function PriceChart({ candles = [], loading, height = 420, symbol }) {
+export function PriceChart({ candles = [], loading, height = 420, resetKey }) {
   const hostRef = React.useRef(null);
   const chartRef = React.useRef(null);
   const seriesRef = React.useRef(null);
@@ -78,14 +78,14 @@ export function PriceChart({ candles = [], loading, height = 420, symbol }) {
     lastBarTimeRef.current = data[data.length - 1]?.time ?? lastBarTimeRef.current;
   }, [candles]);
 
-  // The chart instance is created once and reused across symbol navigations
-  // (the Instrument page doesn't remount) — force a full re-seed when the
-  // symbol changes so we don't try to "update" a leftover bar from the
-  // previous instrument.
+  // The chart instance is created once and reused across symbol/timeframe
+  // changes (the Instrument page doesn't remount) — force a full re-seed
+  // whenever resetKey changes so we don't try to "update" a leftover bar
+  // from the previous instrument or timeframe.
   React.useEffect(() => {
     lastBarTimeRef.current = null;
     seriesRef.current?.setData([]);
-  }, [symbol]);
+  }, [resetKey]);
 
   return (
     <div style={{ position: 'relative', height, width: '100%' }}>

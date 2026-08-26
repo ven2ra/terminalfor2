@@ -20,8 +20,8 @@ export async function fetchInstrument(symbol, market, board) {
   return res.json();
 }
 
-export async function fetchCandles(symbol, market, board) {
-  const res = await fetch(`/api/candles/${symbol}?${q(market, board)}`);
+export async function fetchCandles(symbol, market, board, tf = '1h') {
+  const res = await fetch(`/api/candles/${symbol}?${q(market, board)}&tf=${encodeURIComponent(tf)}`);
   if (!res.ok) throw new Error(`candles request failed: ${res.status}`);
   return res.json();
 }

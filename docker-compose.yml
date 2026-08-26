@@ -7,6 +7,16 @@ services:
       - "4000"
     environment:
       PORT: "4000"
+      # Real order-book depth (T-Инвестиции) — optional. Set TINVEST_TOKEN in a
+      # .env file next to this compose file (never commit it). Without it the
+      # app falls back to a clearly-labelled simulated order book.
+      TINVEST_TOKEN: "${TINVEST_TOKEN:-}"
+      # T-Invest's TLS cert chains to a Russian government CA not in the
+      # default trust store — see server/certs/russian_trusted_ca_bundle.pem.
+      NODE_EXTRA_CA_CERTS: "/app/certs/russian_trusted_ca_bundle.pem"
+      # Harmless if HTTPS_PROXY isn't set; only matters on hosts that need an
+      # outbound proxy for internet access.
+      NODE_USE_ENV_PROXY: "1"
 
   web:
     build: .

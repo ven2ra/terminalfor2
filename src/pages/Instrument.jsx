@@ -11,6 +11,7 @@ import { PriceValue } from '../../components/data/PriceValue.jsx';
 import { DeltaChip } from '../../components/core/DeltaChip.jsx';
 import { SegmentedControl } from '../../components/forms/SegmentedControl.jsx';
 import { AmountField } from '../../components/forms/AmountField.jsx';
+import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { PriceChart } from '../PriceChart.jsx';
 import { DraggableStack, useBlockOrder, useBlockSizes } from '../DraggableBlocks.jsx';
 import { NAV_GROUPS } from '../nav.js';
@@ -19,6 +20,19 @@ import { fetchInstrument, fetchTrades, fetchOrderBook, fetchNews, fetchCandles }
 const BLOCK_ORDER_KEY = 'tf2_instrument_block_order_v1';
 const DEFAULT_ORDER = ['chart', 'orderbook', 'trades', 'order', 'news'];
 const DEFAULT_BLOCK_HEIGHTS = { chart: 500, orderbook: 360, trades: 400, order: 440, news: 360 };
+
+const TIMEFRAMES = [
+  { code: '1m', label: '1м' },
+  { code: '5m', label: '5м' },
+  { code: '10m', label: '10м' },
+  { code: '15m', label: '15м' },
+  { code: '30m', label: '30м' },
+  { code: '1h', label: '1ч' },
+  { code: '4h', label: '4ч' },
+  { code: '1d', label: '1д' },
+  { code: '1w', label: '1н' },
+];
+const TF_LABEL = Object.fromEntries(TIMEFRAMES.map(t => [t.code, t.label]));
 
 function fmtTime(iso) {
   try {
@@ -40,6 +54,7 @@ export function Instrument() {
   const [error, setError] = React.useState(null);
   const [order, setOrder] = useBlockOrder(BLOCK_ORDER_KEY, DEFAULT_ORDER);
   const [sizes, setSize] = useBlockSizes(BLOCK_ORDER_KEY);
+  const [tf, setTf] = React.useState('1h');
 
   const [side, setSide] = React.useState('Купить');
   const [price, setPrice] = React.useState('');
@@ -59,6 +74,13 @@ export function Instrument() {
     setSubmitted(null);
   }, [symbol, market, board]);
 
+  // A timeframe switch also needs a fresh candle history, but shouldn't touch
+  // trades/order book/news which are unrelated to the chart's resolution.
+  React.useEffect(() => {
+    setCandles([]);
+    setChartLoading(true);
+  }, [tf]);
+
   // Instrument info + news barely change — a slow poll is enough.
   const load = React.useCallback(async () => {
     try {
@@ -77,7 +99,7 @@ export function Instrument() {
   const loadLive = React.useCallback(async () => {
     try {
       const [c, t, b] = await Promise.all([
-        fetchCandles(symbol, market, board),
+        fetchCandles(symbol, market, board, tf),
         fetchTrades(symbol, market, board),
         fetchOrderBook(symbol, market, board),
       ]);
@@ -89,7 +111,7 @@ export function Instrument() {
     } catch (e) {
       setError(e.message);
     }
-  }, [symbol, market, board]);
+  }, [symbol, market, board, tf]);
 
   React.useEffect(() => {
     load();
@@ -116,16 +138,25 @@ export function Instrument() {
     chart: (
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: 'var(--sp-7) var(--sp-7) 0' }}>
-          <SectionHeader title="График" eyebrow="Реальные свечи MOEX · часовой таймфрейм" />
+          <SectionHeader
+            title="График"
+            eyebrow={`Реальные свечи MOEX · таймфрейм ${TF_LABEL[tf]}`}
+            actions={<FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TF_LABEL[tf]} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />}
+          />
         </div>
         <div style={{ padding: 'var(--sp-6) var(--sp-5) var(--sp-3)' }}>
-          <PriceChart symbol={symbol} candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 100)} />
+          <PriceChart resetKey={`${symbol}-${tf}`} candles={candles} loading={chartLoading} height={Math.max(240, (sizes.chart ?? DEFAULT_BLOCK_HEIGHTS.chart) - 130)} />
         </div>
       </Card>
     ),
     orderbook: (
       <Card>
-        <SectionHeader title="Стакан заявок" eyebrow="Смоделировано вокруг текущей цены · демо" style={{ paddingBottom: 'var(--sp-6)' }} />
+        <SectionHeader
+          title="Стакан заявок"
+          live={book.source === 'tinvest'}
+          eyebrow={book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано вокруг текущей цены · демо'}
+          style={{ paddingBottom: 'var(--sp-6)' }}
+        />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-6)' }}>
           <div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>

@@ -1,4 +1,5 @@
 import express from 'express';
+import * as tinkoff from './tinkoff.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -79,15 +80,48 @@ async function loadOneSecurity(market, board, symbol) {
   };
 }
 
-async function loadCandlesFull(market, board, symbol, days = 5) {
+async function loadCandlesFull(market, board, symbol, days = 5, interval = 60) {
   const till = new Date();
   const from = new Date(till.getTime() - days * 24 * 3600 * 1000);
   const fmt = d => d.toISOString().slice(0, 10);
-  const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/candles.json?interval=60&from=${fmt(from)}&till=${fmt(till)}&iss.meta=off`;
+  const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/candles.json?interval=${interval}&from=${fmt(from)}&till=${fmt(till)}&iss.meta=off`;
   const json = await fetchJson(url);
   return rowsFromBlock(json.candles)
     .map(r => ({ o: Number(r.open), h: Number(r.high), l: Number(r.low), c: Number(r.close), t: r.begin }))
-    .filter(r => Number.isFinite(r.o) && Number.isFinite(r.c));
+    .filter(r => Number.isFinite(r.o) && Number.isFinite(r.c))
+    .sort((a, b) => a.t.localeCompare(b.t));
+}
+
+// MOEX ISS only serves a handful of native candle intervals (in minutes: 1, 10,
+// 60, plus 24=day, 7=week). Timeframes outside that set (5m, 15m, 30m, 4h) are
+// built by grouping the nearest native interval's candles into wider buckets.
+const TIMEFRAMES = {
+  '1m': { interval: 1, days: 1, group: 1 },
+  '5m': { interval: 1, days: 2, group: 5 },
+  '10m': { interval: 10, days: 5, group: 1 },
+  '15m': { interval: 1, days: 3, group: 15 },
+  '30m': { interval: 10, days: 10, group: 3 },
+  '1h': { interval: 60, days: 10, group: 1 },
+  '4h': { interval: 60, days: 40, group: 4 },
+  '1d': { interval: 24, days: 400, group: 1 },
+  '1w': { interval: 7, days: 1500, group: 1 },
+};
+
+function aggregateCandles(candles, groupSize) {
+  if (!groupSize || groupSize <= 1) return candles;
+  const out = [];
+  for (let i = 0; i < candles.length; i += groupSize) {
+    const chunk = candles.slice(i, i + groupSize);
+    if (!chunk.length) continue;
+    out.push({
+      o: chunk[0].o,
+      c: chunk[chunk.length - 1].c,
+      h: Math.max(...chunk.map(c => c.h)),
+      l: Math.min(...chunk.map(c => c.l)),
+      t: chunk[0].t,
+    });
+  }
+  return out;
 }
 
 async function loadTrades(market, board, symbol) {
@@ -179,10 +213,12 @@ app.get('/api/candles/:symbol', async (req, res) => {
   const market = (req.query.market || 'shares').toString();
   const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
   const symbol = req.params.symbol.toUpperCase();
-  const days = Number(req.query.days || 5);
+  const tf = TIMEFRAMES[req.query.tf] ? req.query.tf.toString() : '1h';
+  const cfg = TIMEFRAMES[tf];
   try {
-    const candles = await loadCandlesFull(market, board, symbol, days);
-    res.json({ symbol, series: candles.map(c => c.c).slice(-40), candles: candles.slice(-60) });
+    const raw = await loadCandlesFull(market, board, symbol, cfg.days, cfg.interval);
+    const candles = aggregateCandles(raw, cfg.group);
+    res.json({ symbol, tf, series: candles.map(c => c.c).slice(-40), candles: candles.slice(-300) });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
@@ -205,8 +241,17 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
   const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
   const symbol = req.params.symbol.toUpperCase();
   try {
+    if (tinkoff.isEnabled()) {
+      const real = await tinkoff.getOrderBook(board, symbol, 10).catch(e => {
+        console.error('T-Invest order book failed, falling back to simulated:', e.message);
+        return null;
+      });
+      if (real && (real.bids.length || real.asks.length)) {
+        return res.json({ ...real, source: 'tinvest' });
+      }
+    }
     const info = await loadOneSecurity(market, board, symbol);
-    res.json(simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000)));
+    res.json({ ...simulateOrderBook(info?.priceRaw, symbol + Math.floor(Date.now() / 2000)), source: 'simulated' });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
