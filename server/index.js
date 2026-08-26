@@ -80,12 +80,28 @@ async function loadOneSecurity(market, board, symbol) {
   };
 }
 
+const ISS_PAGE_SIZE = 500;
+
+// MOEX ISS caps candles.json at 500 rows per request and, when the requested
+// from/till window holds more than that, silently returns the OLDEST 500 —
+// not the most recent. For fine intervals (1m/10m) over a multi-day window
+// that meant the "recent" chart was actually stuck hours or days in the
+// past. Page through with `start` until a short page (or a row cap) ends it.
 async function loadCandlesFull(market, board, symbol, days = 5, interval = 60, till = new Date()) {
   const from = new Date(till.getTime() - days * 24 * 3600 * 1000);
   const fmt = d => d.toISOString().slice(0, 10);
-  const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/candles.json?interval=${interval}&from=${fmt(from)}&till=${fmt(till)}&iss.meta=off`;
-  const json = await fetchJson(url);
-  return rowsFromBlock(json.candles)
+  const base = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities/${symbol}/candles.json?interval=${interval}&from=${fmt(from)}&till=${fmt(till)}&iss.meta=off`;
+
+  const all = [];
+  for (let page = 0; page < 40; page++) {
+    const url = page === 0 ? base : `${base}&start=${page * ISS_PAGE_SIZE}`;
+    const json = await fetchJson(url);
+    const rows = json.candles?.data || [];
+    all.push(...rows);
+    if (rows.length < ISS_PAGE_SIZE) break;
+  }
+
+  return rowsFromBlock({ columns: ['open', 'close', 'high', 'low', 'value', 'volume', 'begin', 'end'], data: all })
     .map(r => ({ o: Number(r.open), h: Number(r.high), l: Number(r.low), c: Number(r.close), t: r.begin }))
     .filter(r => Number.isFinite(r.o) && Number.isFinite(r.c))
     .sort((a, b) => a.t.localeCompare(b.t));

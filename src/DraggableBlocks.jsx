@@ -83,11 +83,18 @@ function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
   );
 }
 
-export function DraggableBlock({ id, dragId, onDragStart, onDragOver, onDrop, onDragEnd, height, onResize, children, style, ...rest }) {
+export function DraggableBlock({ id, dragId, onDragStart, onDrop, onDragEnd, height, onResize, children, style, ...rest }) {
   const dragging = dragId === id;
   return (
     <div
       {...rest}
+      // The drop target is the whole block (not just the handle) — otherwise
+      // there's nowhere sane to actually release the drag onto.
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => {
+        e.preventDefault();
+        onDrop(id);
+      }}
       style={{ opacity: dragging ? 0.4 : 1, transition: 'opacity var(--dur-fast) var(--ease-standard)', ...style }}
     >
       <div
@@ -95,14 +102,6 @@ export function DraggableBlock({ id, dragId, onDragStart, onDragOver, onDrop, on
         onDragStart={e => {
           e.dataTransfer.effectAllowed = 'move';
           onDragStart(id);
-        }}
-        onDragOver={e => {
-          e.preventDefault();
-          onDragOver(id);
-        }}
-        onDrop={e => {
-          e.preventDefault();
-          onDrop(id);
         }}
         onDragEnd={onDragEnd}
         style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', cursor: 'grab', paddingBottom: 'var(--sp-4)', userSelect: 'none' }}
@@ -139,7 +138,6 @@ export function DraggableStack({ order, onReorder, blocks, sizes = {}, defaultSi
           id={id}
           dragId={dragId}
           onDragStart={setDragId}
-          onDragOver={() => {}}
           onDrop={onDrop}
           onDragEnd={() => setDragId(null)}
           height={sizes[id] ?? defaultSizes[id]}
