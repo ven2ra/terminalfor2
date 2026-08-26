@@ -17,7 +17,7 @@ import { PriceChart } from '../PriceChart.jsx';
 import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook } from '../api.js';
 import { NAV_GROUPS } from '../nav.js';
 import { Icon } from '../../components/core/Icon.jsx';
-import { DraggableStack, useBlockRows, useBlockSizes, useWidgetVisibility } from '../DraggableBlocks.jsx';
+import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
 import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
 import { useTheme, toggleTheme } from '../theme.js';
 
@@ -27,11 +27,17 @@ const TIMEFRAMES = [
   { code: '1h', label: '1ч' }, { code: '4h', label: '4ч' }, { code: '1d', label: '1д' },
 ];
 
-const WORKSPACE_KEY = 'tf2_dash_workspace_v1';
+const WORKSPACE_KEY = 'tf2_dash_workspace_v2';
 const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook'];
 const WIDGET_LABELS = { watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель', orderbook: 'Стакан заявок' };
-const DEFAULT_WORKSPACE_ROWS = [['watchlist', 'chart', 'order'], ['portfolio', 'orderbook']];
-const DEFAULT_WORKSPACE_HEIGHTS = { watchlist: 700, chart: 460, order: 460, portfolio: 300, orderbook: 420 };
+// { xPct, y, wPct, h } — x/width as a % of the canvas, y/height in px.
+const DEFAULT_LAYOUT = {
+  watchlist: { xPct: 0, y: 0, wPct: 21, h: 700 },
+  chart: { xPct: 22, y: 0, wPct: 44, h: 460 },
+  order: { xPct: 67, y: 0, wPct: 32, h: 460 },
+  portfolio: { xPct: 22, y: 480, wPct: 44, h: 300 },
+  orderbook: { xPct: 67, y: 480, wPct: 32, h: 420 },
+};
 
 function fmtRub(n, opts) {
   return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
@@ -95,14 +101,12 @@ export function Dashboard() {
   const [qty, setQty] = React.useState('1');
   const [submitted, setSubmitted] = React.useState(null);
 
-  const [rows, setRows, resetRows] = useBlockRows(WORKSPACE_KEY, DEFAULT_WORKSPACE_ROWS);
-  const [sizes, setSize, resetSizes] = useBlockSizes(WORKSPACE_KEY);
+  const [layout, updateBlock, resetLayoutOnly] = useBlockLayout(WORKSPACE_KEY, DEFAULT_LAYOUT);
   const [visible, toggleVisible, setVisible, resetVisible] = useWidgetVisibility(WORKSPACE_KEY, WIDGET_IDS);
   const [addMenuOpen, setAddMenuOpen] = React.useState(false);
 
   const resetLayout = () => {
-    resetRows();
-    resetSizes();
+    resetLayoutOnly();
     resetVisible();
   };
   const hiddenWidgetIds = WIDGET_IDS.filter(id => !visible[id]);
@@ -314,7 +318,7 @@ export function Dashboard() {
           candles={candles}
           loading={chartLoading}
           indicators={{ volume: true }}
-          height={Math.max(220, (sizes.chart?.h ?? DEFAULT_WORKSPACE_HEIGHTS.chart) - 150)}
+          height={Math.max(220, (layout.chart?.h ?? DEFAULT_LAYOUT.chart.h) - 150)}
         />
       </div>
     </Card>
@@ -514,16 +518,12 @@ export function Dashboard() {
               )}
             </div>
           </div>
-          <DraggableStack
-            rows={rows}
-            onReorder={setRows}
+          <FreeCanvas
+            layout={layout}
+            onUpdate={updateBlock}
             blocks={blocks}
-            sizes={sizes}
-            defaultSizes={DEFAULT_WORKSPACE_HEIGHTS}
-            onResize={setSize}
             hidden={Object.fromEntries(WIDGET_IDS.map(id => [id, !visible[id]]))}
             onRemove={id => toggleVisible(id)}
-            gap="var(--sp-7)"
           />
         </main>
       </div>
