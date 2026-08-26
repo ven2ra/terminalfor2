@@ -6,16 +6,22 @@ import { Icon } from '../components/core/Icon.jsx';
  * it, depending on which edge of the target it's dropped on. Persists to
  * localStorage. */
 export function useBlockRows(storageKey, defaultOrder) {
+  // `defaultOrder` may be a flat id array (one block per row) or already
+  // rows-shaped (array of arrays), for a widget grid that should start
+  // grouped rather than stacked.
+  const defaultRows = Array.isArray(defaultOrder[0]) ? defaultOrder : defaultOrder.map(id => [id]);
+  const defaultFlat = defaultRows.flat();
+
   const [rows, setRows] = React.useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey));
       const flat = Array.isArray(saved) ? saved.flat() : null;
-      if (flat && defaultOrder.every(id => flat.includes(id)) && flat.every(id => defaultOrder.includes(id))) {
+      if (flat && defaultFlat.every(id => flat.includes(id)) && flat.every(id => defaultFlat.includes(id))) {
         // Migrate a legacy flat order (one block per row) transparently.
         return Array.isArray(saved[0]) ? saved : saved.map(id => [id]);
       }
     } catch {}
-    return defaultOrder.map(id => [id]);
+    return defaultRows;
   });
 
   const persist = React.useCallback(
@@ -57,6 +63,38 @@ export function useBlockSizes(storageKey) {
   );
 
   return [sizes, setSize];
+}
+
+/** Per-widget show/hide, persisted to localStorage under `${storageKey}_visible`.
+ * Kept separate from row order so a hidden widget re-appears in its old spot. */
+export function useWidgetVisibility(storageKey, ids) {
+  const key = `${storageKey}_visible`;
+  const [visible, setVisible] = React.useState(() => {
+    const init = {};
+    ids.forEach(id => { init[id] = true; });
+    try {
+      const saved = JSON.parse(localStorage.getItem(key));
+      if (saved && typeof saved === 'object') {
+        ids.forEach(id => { if (typeof saved[id] === 'boolean') init[id] = saved[id]; });
+      }
+    } catch {}
+    return init;
+  });
+
+  const toggle = React.useCallback(
+    id => {
+      setVisible(prev => {
+        const next = { ...prev, [id]: !prev[id] };
+        try {
+          localStorage.setItem(key, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    },
+    [key],
+  );
+
+  return [visible, toggle];
 }
 
 function ResizableArea({ id, height, onResize, minHeight = 160, children }) {
@@ -181,7 +219,7 @@ function moveBlock(rows, dragId, targetId, zone) {
   return next;
 }
 
-export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)' }) {
+export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSizes = {}, onResize, gap = 'var(--sp-9)', hidden = {} }) {
   const [dragId, setDragId] = React.useState(null);
 
   const onDropZone = (targetId, zone) => {
@@ -199,25 +237,29 @@ export function DraggableStack({ rows, onReorder, blocks, sizes = {}, defaultSiz
         onDropZone(null, null);
       }}
     >
-      {rows.map((row, i) => (
-        <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'nowrap' }}>
-          {row.map(id => (
-            <div key={id} style={{ flex: '1 1 380px', minWidth: 0 }}>
-              <DraggableBlock
-                id={id}
-                dragId={dragId}
-                onDragStart={setDragId}
-                onDropZone={onDropZone}
-                onDragEnd={() => setDragId(null)}
-                height={sizes[id] ?? defaultSizes[id]}
-                onResize={onResize}
-              >
-                {blocks[id]}
-              </DraggableBlock>
-            </div>
-          ))}
-        </div>
-      ))}
+      {rows.map(row => {
+        const visibleIds = row.filter(id => !hidden[id]);
+        if (!visibleIds.length) return null;
+        return (
+          <div key={row.join('|')} style={{ display: 'flex', alignItems: 'flex-start', gap, flexWrap: 'nowrap' }}>
+            {visibleIds.map(id => (
+              <div key={id} style={{ flex: '1 1 380px', minWidth: 0 }}>
+                <DraggableBlock
+                  id={id}
+                  dragId={dragId}
+                  onDragStart={setDragId}
+                  onDropZone={onDropZone}
+                  onDragEnd={() => setDragId(null)}
+                  height={sizes[id] ?? defaultSizes[id]}
+                  onResize={onResize}
+                >
+                  {blocks[id]}
+                </DraggableBlock>
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

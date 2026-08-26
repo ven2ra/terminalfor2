@@ -584,7 +584,7 @@ export function Instrument() {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 5, background: 'var(--bg-app)' }}>
           <TopBar
-            crumbs={['Дашборд', symbol]}
+            crumbs={['Торговля', symbol]}
             wallet="Демо-счёт"
             address="MOEX ISS"
             searchPlaceholder="Поиск инструмента..."
@@ -592,8 +592,8 @@ export function Instrument() {
         </div>
         <main style={{ padding: 'var(--sp-9)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-9)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-6)' }}>
-            <IconButton icon="chevron-left" size={34} label="Назад к дашборду" onClick={() => navigate('/')} />
-            <Link to="/" style={{ font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>Дашборд</Link>
+            <IconButton icon="chevron-left" size={34} label="Назад к торговле" onClick={() => navigate('/')} />
+            <Link to="/" style={{ font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}>Торговля</Link>
             <span style={{ color: 'var(--n-500)' }}>/</span>
             <span style={{ font: 'var(--type-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{symbol}</span>
           </div>

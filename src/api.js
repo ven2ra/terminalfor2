@@ -1,5 +1,7 @@
-export async function fetchSecurities(board = 'TQBR') {
-  const res = await fetch(`/api/securities?board=${board}`);
+export async function fetchSecurities(market = 'shares', board) {
+  const params = new URLSearchParams({ market });
+  if (board) params.set('board', board);
+  const res = await fetch(`/api/securities?${params}`);
   if (!res.ok) throw new Error(`securities request failed: ${res.status}`);
   return res.json();
 }
