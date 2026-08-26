@@ -52,3 +52,9 @@ export async function fetchBondEvents(symbol) {
   if (!res.ok) throw new Error(`bond-events request failed: ${res.status}`);
   return res.json();
 }
+
+export async function fetchKeyRate() {
+  const res = await fetch('/api/key-rate');
+  if (!res.ok) throw new Error(`key-rate request failed: ${res.status}`);
+  return res.json();
+}

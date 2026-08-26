@@ -15,7 +15,7 @@ import { AmountField } from '../../components/forms/AmountField.jsx';
 import { FilterTabs } from '../../components/forms/FilterTabs.jsx';
 import { SearchInput } from '../../components/forms/SearchInput.jsx';
 import { PriceChart } from '../PriceChart.jsx';
-import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook, fetchBondEvents } from '../api.js';
+import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook, fetchBondEvents, fetchKeyRate } from '../api.js';
 import { NAV_GROUPS } from '../nav.js';
 import { Icon } from '../../components/core/Icon.jsx';
 import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
@@ -29,11 +29,11 @@ const TIMEFRAMES = [
   { code: '1h', label: '1ч' }, { code: '4h', label: '4ч' }, { code: '1d', label: '1д' },
 ];
 
-const WORKSPACE_KEY = 'tf2_dash_workspace_v3';
-const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook', 'bondEvents'];
+const WORKSPACE_KEY = 'tf2_dash_workspace_v4';
+const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook', 'bondEvents', 'margin'];
 const WIDGET_LABELS = {
   watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель',
-  orderbook: 'Стакан заявок', bondEvents: 'Оферты и купоны',
+  orderbook: 'Стакан заявок', bondEvents: 'Оферты и купоны', margin: 'Маржинальная торговля',
 };
 // { xPct, y, wPct, h } — x/width as a % of the canvas, y/height in px.
 const DEFAULT_LAYOUT = {
@@ -43,7 +43,12 @@ const DEFAULT_LAYOUT = {
   portfolio: { xPct: 22, y: 480, wPct: 44, h: 300 },
   orderbook: { xPct: 67, y: 480, wPct: 32, h: 420 },
   bondEvents: { xPct: 22, y: 800, wPct: 44, h: 320 },
+  margin: { xPct: 67, y: 920, wPct: 32, h: 280 },
 };
+
+// A negative cash balance means the account borrowed to buy — the margin
+// spread MOEX-style brokers charge on top of the key rate for that loan.
+const MARGIN_SPREAD_PCT = 6.9;
 
 function fmtRub(n, opts) {
   return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2, ...opts });
@@ -112,6 +117,17 @@ export function Dashboard() {
   const [active, setActive] = React.useState(null); // { symbol, market, board, name }
   const [extraQuotes, setExtraQuotes] = React.useState({});
   const [bondEvents, setBondEvents] = React.useState({ coupons: [], offers: [] });
+  const [keyRate, setKeyRate] = React.useState(null);
+
+  // The CBR key rate changes only a handful of times a year — poll it far
+  // less aggressively than the market data.
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = () => fetchKeyRate().then(r => { if (!cancelled) setKeyRate(r.rate); }).catch(() => {});
+    load();
+    const id = setInterval(load, 10 * 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   const [info, setInfo] = React.useState(null);
   const [tf, setTf] = React.useState('1h');
@@ -599,7 +615,39 @@ export function Dashboard() {
     </Card>
   );
 
-  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard };
+  const debt = account.cash < 0 ? -account.cash : 0;
+  const totalRatePct = keyRate != null ? keyRate + MARGIN_SPREAD_PCT : null;
+  const dailyMarginFee = debt > 0 && totalRatePct != null ? (debt * (totalRatePct / 100)) / 365 : 0;
+
+  const marginCard = (
+    <Card style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+      <SectionHeader title="Маржинальная торговля" size="sm" eyebrow="Ключевая ставка ЦБ РФ · обновляется автоматически" />
+      {debt <= 0 ? (
+        <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Маржинальный займ не используется</span>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--sp-6)' }}>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Сумма долга</div>
+            <PriceValue value={debt} currency="₽" size="sm" />
+          </div>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Ключевая ставка ЦБ</div>
+            <div style={{ font: 'var(--type-h3)', color: 'var(--text-primary)' }}>{keyRate != null ? `${keyRate}%` : '—'}</div>
+          </div>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Итоговая ставка (КС + {MARGIN_SPREAD_PCT}%)</div>
+            <div style={{ font: 'var(--type-h3)', color: 'var(--text-primary)' }}>{totalRatePct != null ? `${totalRatePct.toFixed(2)}%` : '—'}</div>
+          </div>
+          <div>
+            <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>Комиссия за день</div>
+            <div style={{ font: 'var(--type-h3)', color: 'var(--negative)' }}>{fmtRub(dailyMarginFee)} ₽</div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+
+  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard, margin: marginCard };
 
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', background: 'var(--bg-app)' }}>

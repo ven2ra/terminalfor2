@@ -19,6 +19,45 @@ async function fetchJson(url) {
   return data;
 }
 
+// The Bank of Russia's key rate ("ключевая ставка"), straight from its own
+// SOAP web service — it changes only a handful of times a year (rate-setting
+// meetings), so a long cache is deliberate, not laziness.
+const CBR_SOAP_URL = 'https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx';
+const KEY_RATE_TTL_MS = 6 * 3600_000;
+let keyRateCache = { value: null, ts: 0 };
+
+async function loadKeyRate() {
+  if (keyRateCache.value != null && Date.now() - keyRateCache.ts < KEY_RATE_TTL_MS) {
+    return keyRateCache.value;
+  }
+  const to = new Date();
+  const from = new Date(to.getTime() - 30 * 24 * 3600 * 1000);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <KeyRate xmlns="http://web.cbr.ru/">
+      <fromDate>${fmt(from)}</fromDate>
+      <ToDate>${fmt(to)}</ToDate>
+    </KeyRate>
+  </soap12:Body>
+</soap12:Envelope>`;
+  const res = await fetch(CBR_SOAP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/xml; charset=utf-8', SOAPAction: '"http://web.cbr.ru/KeyRate"' },
+    body,
+  });
+  if (!res.ok) throw new Error(`CBR key rate request failed: ${res.status}`);
+  const xml = await res.text();
+  // The service returns entries newest-first, so the first <Rate> in the
+  // document is the currently effective key rate.
+  const match = xml.match(/<Rate>([\d.,]+)<\/Rate>/);
+  if (!match) throw new Error('CBR key rate: unexpected response shape');
+  const rate = Number(match[1].replace(',', '.'));
+  keyRateCache = { value: rate, ts: Date.now() };
+  return rate;
+}
+
 function rowsFromBlock(block) {
   const { columns, data } = block;
   return data.map(row => Object.fromEntries(columns.map((c, i) => [c, row[i]])));
@@ -270,6 +309,14 @@ app.get('/api/bond-events/:symbol', async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   try {
     res.json(await loadBondEvents(symbol));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get('/api/key-rate', async (req, res) => {
+  try {
+    res.json({ rate: await loadKeyRate() });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
