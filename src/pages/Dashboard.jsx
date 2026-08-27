@@ -21,7 +21,7 @@ import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commission
 import { useTheme, toggleTheme } from '../theme.js';
 import { useMarketOpen, marketScheduleLabel, useSessionPhase, SESSION_PHASE_LABELS } from '../marketHours.js';
 
-const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
+const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит'];
 const TIMEFRAMES = [
   { code: '1m', label: '1м' }, { code: '5m', label: '5м' }, { code: '15m', label: '15м' },
   { code: '1h', label: '1ч' }, { code: '4h', label: '4ч' }, { code: '1d', label: '1д' },
@@ -142,6 +142,13 @@ export function Dashboard() {
   const [qty, setQty] = React.useState('1');
   const [submitted, setSubmitted] = React.useState(null);
 
+  // Each loadAll() call can resolve out of order relative to the next one
+  // (network jitter, or the active instrument changing mid-flight) — without
+  // a guard, a slower older response landing after a newer one would briefly
+  // overwrite price/candles/book with stale data, which is exactly what made
+  // the header, chart and order book disagree with each other.
+  const requestIdRef = React.useRef(0);
+
   const [layout, updateBlock, resetLayoutOnly] = useBlockLayout(WORKSPACE_KEY, DEFAULT_LAYOUT);
   const [visible, toggleVisible, setVisible, resetVisible] = useWidgetVisibility(WORKSPACE_KEY, WIDGET_IDS);
   const [addMenuOpen, setAddMenuOpen] = React.useState(false);
@@ -183,7 +190,14 @@ export function Dashboard() {
   const activeQuote = active
     ? getQuote(active.symbol) || (info && info.symbol === active.symbol ? info : null)
     : null;
-  const priceFlash = usePriceFlash(activeQuote?.priceRaw);
+  // The watchlist's list endpoint and the single-instrument endpoint hit
+  // different MOEX ISS URLs with independently-expiring caches — they can
+  // legitimately disagree by one tick for a few seconds. `info` (the
+  // dedicated per-symbol fetch, also what seeds the order book on the
+  // server) is the one source every other display defers to, so the ticker,
+  // list row, chart and order form all show the exact same number at once.
+  const livePrice = active && info?.symbol === active.symbol && info.priceRaw != null ? info.priceRaw : activeQuote?.priceRaw;
+  const priceFlash = usePriceFlash(livePrice);
 
   const filteredWatchlist = React.useMemo(() => {
     const q = watchlistQuery.trim().toLocaleLowerCase();
@@ -209,6 +223,7 @@ export function Dashboard() {
   // one shared tick so they can never drift apart from each other by
   // however long a per-widget poll interval happened to be offset by.
   const loadAll = React.useCallback(async () => {
+    const myRequestId = ++requestIdRef.current;
     try {
       const tasks = [fetchSecurities(assetClass)];
       if (active) {
@@ -219,6 +234,10 @@ export function Dashboard() {
         );
       }
       const [securities, instrumentInfo, candlesResp, bookResp] = await Promise.all(tasks);
+      // A newer loadAll() started (and possibly already finished) while this
+      // one was in flight — this response is stale, drop it instead of
+      // clobbering whatever the newer one already rendered.
+      if (myRequestId !== requestIdRef.current) return;
 
       setWatchlist(securities);
       setWatchlistError(null);
@@ -257,6 +276,7 @@ export function Dashboard() {
         if (livePrice != null) checkPendingOrders(active.symbol, livePrice);
       }
     } catch (e) {
+      if (myRequestId !== requestIdRef.current) return;
       setWatchlistError(e.message);
     }
   }, [active?.symbol, active?.market, active?.board, tf, assetClass]);
@@ -273,7 +293,11 @@ export function Dashboard() {
     return () => clearInterval(id);
   }, [loadAll, marketOpen]);
 
-  const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: r.market === 'bonds' ? '%' : null }));
+  const ticker = watchlist.slice(0, 10).map(r => {
+    const isActiveRow = active && r.symbol === active.symbol;
+    const price = isActiveRow && livePrice != null ? livePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : r.price;
+    return { symbol: r.symbol, price, quote: r.market === 'bonds' ? '%' : null };
+  });
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
 
   const lotSize = info?.lotSize || 1;
@@ -282,8 +306,8 @@ export function Dashboard() {
   const faceValue = info?.faceValue || 0;
   const accruedInterest = info?.accruedInterest || 0;
   const isMarket = orderType === 'Рыночная';
-  const needsStop = orderType === 'Стоп-лимит' || orderType === 'Стоп-маркет';
-  const effectivePrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || 0;
+  const needsStop = orderType === 'Стоп-лимит';
+  const effectivePrice = isMarket ? livePrice || 0 : Number(price) || 0;
   const qtyNum = Number(qty) || 0;
   const notional = orderNotional({ isBond: isBondActive, price: effectivePrice, qty: qtyNum, lotSize, faceValue, accruedInterest });
   const nkdAmount = isBondActive ? accruedInterest * qtyNum * lotSize : 0;
@@ -300,7 +324,7 @@ export function Dashboard() {
       setQty(String(Math.max(0, Math.floor((held * pct) / 100))));
       return;
     }
-    const refPrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || activeQuote?.priceRaw || 0;
+    const refPrice = isMarket ? livePrice || 0 : Number(price) || livePrice || 0;
     if (!refPrice) return;
     const budget = (account.cash * pct) / 100;
     const perLot = (unitCost({ isBond: isBondActive, price: refPrice, faceValue }) * lotSize + (isBondActive ? accruedInterest * lotSize : 0)) * (1 + commissionRate());
@@ -320,7 +344,7 @@ export function Dashboard() {
     const limitPrice = roundToTick(Number(price) || 0);
     const result = placeOrder({
       symbol: active.symbol, market: active.market, board: active.board, name: activeQuote?.name || info?.name || active.name,
-      side, type: orderType, qty: qtyNum, price: limitPrice, stopPrice: Number(stopPrice) || 0, lastPrice: activeQuote?.priceRaw || 0,
+      side, type: orderType, qty: qtyNum, price: limitPrice, stopPrice: Number(stopPrice) || 0, lastPrice: livePrice || 0,
       lotSize, isBond: isBondActive, faceValue, accruedInterest, minStep,
     });
     setSubmitted({ ...result, side, type: orderType, qty: qtyNum, at: new Date() });
@@ -382,7 +406,9 @@ export function Dashboard() {
                     </span>
                   </td>
                   <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-faint)' }}>{r.marketCap}</td>
-                  <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>{r.price} {priceUnit(r.market)}</td>
+                  <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>
+                    {isActive && livePrice != null ? livePrice.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : r.price} {priceUnit(r.market)}
+                  </td>
                   <td style={{ ...bookTd, textAlign: 'right' }}><DeltaChip value={r.deltaRaw} size="sm" /></td>
                 </tr>
               );
@@ -408,7 +434,7 @@ export function Dashboard() {
                 animation: priceFlash ? `${priceFlash.dir === 'up' ? 'tf2PriceFlashUp' : 'tf2PriceFlashDown'} 700ms ease-out` : 'none',
               }}
             >
-              <PriceValue value={activeQuote?.priceRaw} currency="" suffix={priceUnit(active?.market)} size="lg" />
+              <PriceValue value={livePrice} currency="" suffix={priceUnit(active?.market)} size="lg" />
             </span>
             {activeQuote && <DeltaChip value={activeQuote.deltaRaw} showIcon />}
             <Badge tone={marketOpen ? 'positive' : 'neutral'}>{SESSION_PHASE_LABELS[sessionPhase]}</Badge>
@@ -515,13 +541,10 @@ export function Dashboard() {
           <SegmentedControl options={['Купить', 'Продать']} value={side} onChange={setSide} />
           <SelectMenu options={ORDER_TYPES} value={orderType} onChange={setOrderType} />
           {!isMarket && (
-            <div>
-              <AmountField label={needsStop ? `Цена исполнения, ${priceUnit(active.market)}` : `Цена, ${priceUnit(active.market)}`} value={price} onChange={e => setPrice(e.target.value)} currency={priceUnit(active.market)} />
-              {minStep > 0 && <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>Шаг цены: {minStep}</span>}
-            </div>
+            <AmountField label={needsStop ? `Цена исполнения, ${priceUnit(active.market)}` : `Цена, ${priceUnit(active.market)}`} value={price} onChange={e => setPrice(e.target.value)} currency={priceUnit(active.market)} />
           )}
           {needsStop && <AmountField label={`Стоп-цена, ${priceUnit(active.market)}`} value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency={priceUnit(active.market)} />}
-          <AmountField label="Количество, лоты" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
+          <AmountField label="Количество, лоты" value={qty} onChange={e => setQty(e.target.value)} currency="лот" />
           <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
             {[10, 25, 50, 100].map(pct => (
               <Button key={pct} variant="secondary" size="sm" style={{ flex: '1 1 60px' }} onClick={() => setQtyFromPercent(pct)}>{pct}%</Button>
@@ -545,7 +568,7 @@ export function Dashboard() {
               Укажите количество лотов больше нуля
             </span>
           )}
-          <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth disabled={!canSubmit} onClick={submitOrder}>{side} {active.symbol}</Button>
+          <Button variant={!marketOpen ? 'secondary' : side === 'Купить' ? 'buy' : 'sell'} size="lg" fullWidth disabled={!canSubmit} onClick={submitOrder}>{side} {active.symbol}</Button>
           {submitted && (
             <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: submitted.ok ? 'var(--text-faint)' : 'var(--negative)' }}>
               {submitted.ok
@@ -564,18 +587,15 @@ export function Dashboard() {
   const bestAsk = book.asks[0]?.price;
   const spread = bestBid != null && bestAsk != null ? bestAsk - bestBid : null;
   const spreadPct = spread != null && bestBid ? (spread / bestBid) * 100 : null;
+  const mid = bestBid != null && bestAsk != null ? (bestBid + bestAsk) / 2 : null;
 
   const orderbookCard = (
-    <Card style={{ height: '100%', overflow: 'auto' }}>
+    <Card variant="panel" style={{ height: '100%', overflow: 'auto' }}>
       <SectionHeader
         title="Стакан заявок"
         size="sm"
         live={marketOpen && book.source === 'tinvest'}
-        eyebrow={
-          !marketOpen
-            ? `Торги закрыты · сессия ${marketScheduleLabel()}`
-            : book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано · демо'
-        }
+        eyebrow={!marketOpen ? `Торги закрыты · сессия ${marketScheduleLabel()}` : book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'смоделировано'}
         actions={!marketOpen && <Badge tone="neutral">Закрыто</Badge>}
         style={{ paddingBottom: 'var(--sp-4)' }}
       />
@@ -585,10 +605,8 @@ export function Dashboard() {
           marginBottom: 'var(--sp-4)', background: 'var(--surface-inset)', borderRadius: 'var(--r-md)',
           font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
         }}>
-          <span>Спред</span>
-          <span style={{ color: 'var(--text-primary)', fontWeight: 'var(--fw-semibold)' }}>
-            {fmtRub(spread)} {priceUnit(active?.market)} ({spreadPct != null ? spreadPct.toFixed(2) : '—'}%)
-          </span>
+          <span>Спред: <span style={{ color: 'var(--text-primary)', fontWeight: 'var(--fw-semibold)' }}>{fmtRub(spread)} {priceUnit(active?.market)} ({spreadPct != null ? spreadPct.toFixed(2) : '—'}%)</span></span>
+          <span>Mid: <span style={{ color: 'var(--text-primary)', fontWeight: 'var(--fw-semibold)' }}>{mid != null ? fmtRub(mid) : '—'} {priceUnit(active?.market)}</span></span>
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--sp-5)' }}>
@@ -596,7 +614,7 @@ export function Dashboard() {
           <thead><tr><th style={bookTh}>Покупка, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.bids.map((r, i) => (
-              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Продать')} style={{ cursor: 'pointer' }}
+              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Купить')} style={{ cursor: 'pointer' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                 <td style={{ ...bookTd, color: 'var(--positive)', position: 'relative' }}>
@@ -612,7 +630,7 @@ export function Dashboard() {
           <thead><tr><th style={bookTh}>Продажа, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.asks.map((r, i) => (
-              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Купить')} style={{ cursor: 'pointer' }}
+              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Продать')} style={{ cursor: 'pointer' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                 <td style={{ ...bookTd, color: 'var(--negative)', position: 'relative' }}>
@@ -626,7 +644,7 @@ export function Dashboard() {
         </table>
       </div>
       <div style={{ paddingTop: 'var(--sp-4)', font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
-        Клик по цене — подставить в заявку · лот = {lotSize} шт
+        Клик по цене — лимитная заявка на этой стороне · лот = {lotSize} шт
       </div>
     </Card>
   );

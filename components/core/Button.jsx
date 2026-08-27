@@ -11,6 +11,11 @@ export function Button({ variant = 'primary', size = 'md', icon, trailingIcon, f
     secondary: { background: 'var(--surface-inset)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', boxShadow: 'none' },
     ghost: { background: hover ? 'var(--surface-hover)' : 'transparent', color: 'var(--text-muted)', border: '1px solid transparent', boxShadow: 'none' },
     danger: { background: 'var(--negative-soft)', color: 'var(--negative)', border: '1px solid rgba(239,68,68,.3)', boxShadow: 'none' },
+    // Trading-specific: a buy/sell CTA reads by universal green/red convention,
+    // not the app's violet brand accent — a violet "Buy" button next to a red
+    // "Sell" one doesn't read as a matched pair of opposite actions.
+    buy: { background: 'var(--positive)', color: '#ffffff', border: '1px solid transparent', boxShadow: hover ? '0 0 0 3px var(--positive-soft)' : 'none' },
+    sell: { background: 'var(--negative)', color: '#ffffff', border: '1px solid transparent', boxShadow: hover ? '0 0 0 3px var(--negative-soft)' : 'none' },
   }[variant];
   return (
     <button type="button" disabled={disabled} onMouseEnter={() => setHover(true)} onMouseLeave={() => { setHover(false); setPress(false); }}

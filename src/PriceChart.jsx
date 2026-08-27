@@ -28,6 +28,26 @@ function toBar(c) {
   return { time: Math.floor(new Date(c.t.replace(' ', 'T') + 'Z').getTime() / 1000), open: c.o, high: c.h, low: c.l, close: c.c };
 }
 
+// A single bad print (a stray outlier candle, or a stale value momentarily
+// mixed in during a symbol switch) can blow the price axis out to include it,
+// leaving a mostly-empty chart with the real candles squeezed into a sliver.
+// Trimming the single most extreme high/low out of the visible set keeps the
+// axis honest without needing to know *why* one bar is off — a real multi-bar
+// rally or selloff still shows in full, since only one bar's worth is ever cut.
+function robustPriceRange(bars) {
+  if (!bars.length) return null;
+  const highs = bars.map(b => b.high).filter(Number.isFinite).sort((a, b) => a - b);
+  const lows = bars.map(b => b.low).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!highs.length || !lows.length) return null;
+  const n = highs.length;
+  const trim = n > 20 ? 1 : 0;
+  const minValue = lows[Math.min(trim, n - 1)];
+  const maxValue = highs[Math.max(0, n - 1 - trim)];
+  if (!(minValue < maxValue)) return null;
+  const margin = (maxValue - minValue) * 0.08;
+  return { minValue: minValue - margin, maxValue: maxValue + margin };
+}
+
 const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
 const FIB_COLOR = 'rgba(107,92,255,.7)';
 
@@ -107,6 +127,19 @@ export function PriceChart({
       borderVisible: false,
       wickUpColor: 'rgba(34,197,94,.55)',
       wickDownColor: 'rgba(239,68,68,.55)',
+      autoscaleInfoProvider: original => {
+        const bars = barsRef.current;
+        if (!bars.length) return original();
+        const range = chart.timeScale().getVisibleLogicalRange();
+        let visible = bars;
+        if (range) {
+          const from = Math.max(0, Math.floor(range.from));
+          const to = Math.min(bars.length - 1, Math.ceil(range.to));
+          if (to > from) visible = bars.slice(from, to + 1);
+        }
+        const priceRange = robustPriceRange(visible);
+        return priceRange ? { priceRange } : original();
+      },
     });
 
     // Scrolling/zooming near the left edge of what's loaded asks the parent

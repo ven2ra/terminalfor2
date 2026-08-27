@@ -252,7 +252,7 @@ async function loadTrades(market, board, symbol) {
 // reachable anonymously via ISS. This generates a plausible-looking book around
 // the last traded price so the panel has something to render — it is explicitly
 // labelled "смоделировано" (simulated) in the UI, never presented as live depth.
-function simulateOrderBook(lastPrice, seedKey, depth = 20) {
+function simulateOrderBook(lastPrice, seedKey, minStep, depth = 20) {
   if (!lastPrice) return { bids: [], asks: [] };
   let seed = 0;
   for (let i = 0; i < seedKey.length; i++) seed = (seed * 31 + seedKey.charCodeAt(i)) >>> 0;
@@ -260,10 +260,28 @@ function simulateOrderBook(lastPrice, seedKey, depth = 20) {
     seed = (seed * 1103515245 + 12345) >>> 0;
     return (seed >>> 8) / 0xffffff;
   };
-  const step = Math.max(lastPrice * 0.0006, 0.01);
-  const bids = Array.from({ length: depth }, (_, i) => ({ price: Number((lastPrice - (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
-  const asks = Array.from({ length: depth }, (_, i) => ({ price: Number((lastPrice + (i + 1) * step).toFixed(2)), qty: Math.round(10 + rand() * 400) * 10 }));
+  // Every level must land on a real MOEX price tick from the instrument's own
+  // paspoort — a level generated off an arbitrary percentage step (like the
+  // old 0.06% guess) can sit between two ticks, which is a price nobody could
+  // actually rest a limit order at, and looks like "rounding" once a click
+  // snaps it back onto the grid.
+  const tick = minStep > 0 ? minStep : Math.max(lastPrice * 0.0006, 0.01);
+  const ticksPerLevel = Math.max(1, Math.round((lastPrice * 0.0006) / tick));
+  const step = tick * ticksPerLevel;
+  const decimals = tick < 1 ? Math.min(6, (String(tick).split('.')[1] || '').length) : 2;
+  const roundToTick = v => Number((Math.round(v / tick) * tick).toFixed(decimals));
+  const bids = Array.from({ length: depth }, (_, i) => ({ price: roundToTick(lastPrice - (i + 1) * step), qty: Math.round(10 + rand() * 400) * 10 }));
+  const asks = Array.from({ length: depth }, (_, i) => ({ price: roundToTick(lastPrice + (i + 1) * step), qty: Math.round(10 + rand() * 400) * 10 }));
   return { bids, asks };
+}
+
+// Two depth entries can legitimately land on the same price tick (several
+// resting orders at one level) — the book shows one row per price, volumes
+// summed, never several rows that add up to the true size at a glance.
+function aggregateByPrice(levels) {
+  const byPrice = new Map();
+  for (const l of levels) byPrice.set(l.price, (byPrice.get(l.price) || 0) + l.qty);
+  return Array.from(byPrice, ([price, qty]) => ({ price, qty }));
 }
 
 // No public news wire is wired up; this turns the instrument's own market data
@@ -460,10 +478,14 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
   try {
     const info = await loadOneSecurity(market, board, symbol);
     const lotSize = info?.lotSize || 1;
-    const withValue = book => ({
-      bids: book.bids.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
-      asks: book.asks.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
-    });
+    const withValue = book => {
+      const bids = aggregateByPrice(book.bids).sort((a, b) => b.price - a.price);
+      const asks = aggregateByPrice(book.asks).sort((a, b) => a.price - b.price);
+      return {
+        bids: bids.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
+        asks: asks.map(l => ({ ...l, value: Math.round(l.price * l.qty * lotSize) })),
+      };
+    };
 
     if (tinkoff.isEnabled()) {
       const real = await tinkoff.getOrderBook(board, symbol, 20).catch(e => {
@@ -479,7 +501,7 @@ app.get('/api/orderbook/:symbol', async (req, res) => {
     // simulated book instead of reshuffling every 2s regardless of whether
     // anything is actually happening.
     const seedKey = isMarketOpen() ? symbol + Math.floor(Date.now() / 2000) : `${symbol}_closed`;
-    res.json({ ...withValue(simulateOrderBook(info?.priceRaw, seedKey)), lotSize, source: 'simulated', marketOpen: isMarketOpen() });
+    res.json({ ...withValue(simulateOrderBook(info?.priceRaw, seedKey, info?.minStep)), lotSize, source: 'simulated', marketOpen: isMarketOpen() });
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
