@@ -72,11 +72,28 @@ const DEFAULT_BOARD = { shares: 'TQBR', bonds: 'TQOB' };
 // distinction falls back to matching the fund's own name (every bond BPIF on
 // MOEX spells out "облигации" or "обл" in its name; a false negative here
 // would just leave a bond fund classified as an equity fund, not a bond).
-function classifyKind(market, secname, instrid) {
+function classifyKind(market, secname, instrid, latname) {
   if (market === 'bonds') return 'bond';
   const isFund = instrid === 'IFTF' || /БПИФ|ETF|фонд/i.test(secname || '');
   if (!isFund) return 'share';
-  return /облига|обл\.|bond/i.test(secname || '') ? 'bond-fund' : 'equity-fund';
+  const text = `${secname || ''} ${latname || ''}`;
+  // MOEX's SECTYPE doesn't distinguish a money-market BPIF from an equity or
+  // bond one (all come back "J") — the fund's own name is the only signal,
+  // and its English LATNAME reliably spells out "Money Market" even when the
+  // Russian SECNAME doesn't obviously say so (e.g. "БПИФ Первая Сберегательный").
+  if (/money market|денежн\w* рынок|ликвидност/i.test(text)) return 'money-market-fund';
+  return /облига|обл\.|bond/i.test(text) ? 'bond-fund' : 'equity-fund';
+}
+
+// A trade struck today settles either same-day (T0) or next business day
+// (T+1) depending on the instrument — MOEX ISS doesn't expose that as its
+// own flag, but SETTLEDATE (the next settlement date for a trade struck
+// today) does: if it lands on today's date, that's T0; otherwise T+1. Real
+// MOEX also has T+2 boards, but T0/T+1 covers the instruments this app trades.
+function settlementLabel(settledate) {
+  if (!settledate) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  return settledate <= today ? 'T0' : 'T+1';
 }
 
 async function loadSecurities(market, board) {
@@ -99,11 +116,13 @@ async function loadSecurities(market, board) {
         name,
         market,
         board,
-        kind: classifyKind(market, name, s.INSTRID),
+        kind: classifyKind(market, name, s.INSTRID, s.LATNAME),
         lotSize: Number(s.LOTSIZE || 1),
         minStep: s.MINSTEP != null ? Number(s.MINSTEP) : null,
         faceValue: s.FACEVALUE != null ? Number(s.FACEVALUE) : null,
         accruedInterest: s.ACCRUEDINT != null ? Number(s.ACCRUEDINT) : 0,
+        isin: s.ISIN || null,
+        settlement: settlementLabel(s.SETTLEDATE),
         priceRaw: price != null ? Number(price) : null,
         deltaRaw: change != null ? Number(change.toFixed(2)) : 0,
         price: price != null ? Number(price).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : '—',
@@ -136,7 +155,7 @@ async function loadOneSecurity(market, board, symbol) {
     name,
     market,
     board,
-    kind: classifyKind(market, name, s.INSTRID),
+    kind: classifyKind(market, name, s.INSTRID, s.LATNAME),
     priceRaw: price != null ? Number(price) : null,
     deltaRaw: change != null ? Number(change.toFixed(2)) : 0,
     volumeRaw: Number(md.VALTODAY || 0),
@@ -144,6 +163,8 @@ async function loadOneSecurity(market, board, symbol) {
     minStep: s.MINSTEP != null ? Number(s.MINSTEP) : null,
     faceValue: s.FACEVALUE != null ? Number(s.FACEVALUE) : null,
     accruedInterest: s.ACCRUEDINT != null ? Number(s.ACCRUEDINT) : 0,
+    isin: s.ISIN || null,
+    settlement: settlementLabel(s.SETTLEDATE),
     bid: md.BID != null ? Number(md.BID) : null,
     offer: md.OFFER != null ? Number(md.OFFER) : null,
     spread: md.SPREAD != null ? Number(md.SPREAD) : null,
@@ -364,7 +385,7 @@ app.get('/api/securities', async (req, res) => {
         loadSecurities('bonds', DEFAULT_BOARD.bonds),
         loadSecurities('shares', DEFAULT_BOARD.shares),
       ]);
-      const rows = [...bonds, ...shares.filter(r => r.kind === 'bond-fund')]
+      const rows = [...bonds, ...shares.filter(r => r.kind === 'bond-fund' || r.kind === 'money-market-fund')]
         .sort((a, b) => b._volRub - a._volRub)
         .slice(0, 30)
         .map(({ _volRub, ...r }) => r);

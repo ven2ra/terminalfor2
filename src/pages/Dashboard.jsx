@@ -38,9 +38,9 @@ const DEFAULT_LAYOUT = {
   watchlist: { xPct: 0, y: 0, wPct: 21, h: 700 },
   chart: { xPct: 22, y: 0, wPct: 44, h: 460 },
   order: { xPct: 67, y: 0, wPct: 32, h: 460 },
-  activeOrders: { xPct: 67, y: 480, wPct: 32, h: 260 },
   portfolio: { xPct: 22, y: 480, wPct: 44, h: 300 },
-  orderbook: { xPct: 67, y: 760, wPct: 32, h: 420 },
+  orderbook: { xPct: 67, y: 480, wPct: 32, h: 420 },
+  activeOrders: { xPct: 67, y: 920, wPct: 32, h: 260 },
   bondEvents: { xPct: 22, y: 800, wPct: 44, h: 320 },
   margin: { xPct: 67, y: 1200, wPct: 32, h: 280 },
 };
@@ -290,20 +290,22 @@ export function Dashboard() {
   const commission = notional * commissionRate();
   const totalCost = notional + commission;
   const position = active && account.positions[active.symbol];
-  const fillPriceFromBook = p => { setOrderType('Лимитная'); setPrice(String(p)); };
+  // Clicking a bid means someone else wants to buy — fill a sell into it;
+  // clicking an ask fills a buy at what someone's already offering.
+  const fillPriceFromBook = (p, bookSide) => { setOrderType('Лимитная'); setPrice(String(p)); if (bookSide) setSide(bookSide); };
 
   const setQtyFromPercent = pct => {
     if (side === 'Продать') {
       const held = position?.qty || 0;
-      setQty(String(Math.max(1, Math.floor((held * pct) / 100))));
+      setQty(String(Math.max(0, Math.floor((held * pct) / 100))));
       return;
     }
     const refPrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || activeQuote?.priceRaw || 0;
     if (!refPrice) return;
     const budget = (account.cash * pct) / 100;
-    const perLot = unitCost({ isBond: isBondActive, price: refPrice, faceValue }) * lotSize + (isBondActive ? accruedInterest * lotSize : 0);
+    const perLot = (unitCost({ isBond: isBondActive, price: refPrice, faceValue }) * lotSize + (isBondActive ? accruedInterest * lotSize : 0)) * (1 + commissionRate());
     if (!perLot) return;
-    setQty(String(Math.max(1, Math.floor(budget / perLot))));
+    setQty(String(Math.max(0, Math.floor(budget / perLot))));
   };
 
   // MOEX quotes in discrete price-tick increments (MINSTEP) — round whatever
@@ -319,10 +321,12 @@ export function Dashboard() {
     const result = placeOrder({
       symbol: active.symbol, market: active.market, board: active.board, name: activeQuote?.name || info?.name || active.name,
       side, type: orderType, qty: qtyNum, price: limitPrice, stopPrice: Number(stopPrice) || 0, lastPrice: activeQuote?.priceRaw || 0,
-      lotSize, isBond: isBondActive, faceValue, accruedInterest,
+      lotSize, isBond: isBondActive, faceValue, accruedInterest, minStep,
     });
     setSubmitted({ ...result, side, type: orderType, qty: qtyNum, at: new Date() });
   };
+
+  const canSubmit = marketOpen && qtyNum > 0;
 
   const maxBookQty = Math.max(1, ...book.bids.map(l => l.qty), ...book.asks.map(l => l.qty));
   const bookTh = { font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)', fontWeight: 'var(--fw-medium)', textAlign: 'left', padding: '0 var(--sp-4) var(--sp-4)' };
@@ -497,6 +501,17 @@ export function Dashboard() {
         <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Выберите инструмент слева</span>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'var(--sp-2) var(--sp-5)',
+            padding: 'var(--sp-4) var(--sp-5)', background: 'var(--surface-inset)', borderRadius: 'var(--r-md)',
+            font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
+          }}>
+            <span>Лот: {lotSize} шт</span>
+            <span>Шаг цены: {minStep || '—'}</span>
+            {isBondActive && <span>Номинал: {fmtRub(faceValue)} ₽</span>}
+            <span>Расчёты: {info?.settlement || '—'}</span>
+            <span style={{ gridColumn: '1 / -1', overflowWrap: 'anywhere' }}>ISIN: {info?.isin || '—'}</span>
+          </div>
           <SegmentedControl options={['Купить', 'Продать']} value={side} onChange={setSide} />
           <SelectMenu options={ORDER_TYPES} value={orderType} onChange={setOrderType} />
           {!isMarket && (
@@ -522,10 +537,15 @@ export function Dashboard() {
           </div>
           {!marketOpen && (
             <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
-              Торги закрыты — заявки недоступны вне сессии {marketScheduleLabel()}
+              Рынок закрыт — заявки недоступны вне сессии {marketScheduleLabel()}
             </span>
           )}
-          <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth disabled={!marketOpen} onClick={submitOrder}>{side} {active.symbol}</Button>
+          {marketOpen && qtyNum <= 0 && (
+            <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
+              Укажите количество лотов больше нуля
+            </span>
+          )}
+          <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth disabled={!canSubmit} onClick={submitOrder}>{side} {active.symbol}</Button>
           {submitted && (
             <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: submitted.ok ? 'var(--text-faint)' : 'var(--negative)' }}>
               {submitted.ok
@@ -576,7 +596,7 @@ export function Dashboard() {
           <thead><tr><th style={bookTh}>Покупка, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.bids.map((r, i) => (
-              <tr key={i} onClick={() => fillPriceFromBook(r.price)} style={{ cursor: 'pointer' }}
+              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Продать')} style={{ cursor: 'pointer' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                 <td style={{ ...bookTd, color: 'var(--positive)', position: 'relative' }}>
@@ -592,7 +612,7 @@ export function Dashboard() {
           <thead><tr><th style={bookTh}>Продажа, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
           <tbody>
             {book.asks.map((r, i) => (
-              <tr key={i} onClick={() => fillPriceFromBook(r.price)} style={{ cursor: 'pointer' }}
+              <tr key={i} onClick={() => fillPriceFromBook(r.price, 'Купить')} style={{ cursor: 'pointer' }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                 <td style={{ ...bookTd, color: 'var(--negative)', position: 'relative' }}>

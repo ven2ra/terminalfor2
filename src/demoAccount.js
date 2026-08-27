@@ -90,26 +90,55 @@ function applyFill(s, { symbol, market, board, name, side, qty, price, type, lot
   };
 }
 
+// A simplified price collar: MOEX rejects a limit order priced too far from
+// the last trade, to stop a fat-fingered price from resting in the book.
+const PRICE_BAND_PCT = 20;
+
 /** Places an order. Market fills immediately; Limit/Stop-* queue until checkPendingOrders triggers them.
- * `lotSize`/`isBond`/`faceValue`/`accruedInterest` all come from the instrument's own MOEX ISS data —
- * pass whatever the caller has fetched, never hardcoded here. */
-export function placeOrder({ symbol, market, board, name, side, type, qty, price, stopPrice, lastPrice, lotSize, isBond, faceValue, accruedInterest }) {
-  qty = Math.max(1, Math.floor(qty) || 0);
+ * `lotSize`/`isBond`/`faceValue`/`accruedInterest`/`minStep` all come from the instrument's own MOEX ISS
+ * data — pass whatever the caller has fetched, never hardcoded here. */
+export function placeOrder({ symbol, market, board, name, side, type, qty, price, stopPrice, lastPrice, lotSize, isBond, faceValue, accruedInterest, minStep }) {
+  qty = Math.floor(qty) || 0;
   lotSize = lotSize || 1;
   const s = state;
+
+  // A zero (or negative/non-numeric) quantity is never a valid order — it
+  // must be rejected outright, not silently bumped up to 1 lot.
+  if (qty <= 0) {
+    return { ok: false, error: 'Неверное количество — укажите хотя бы 1 лот' };
+  }
 
   // MOEX only continuously matches during the trading session — a market
   // order has nothing to match against once it's closed. A limit order can
   // still be queued to wait for the next session, same as a real broker.
   if (type === 'Рыночная' && !isMarketOpen()) {
-    return { ok: false, error: 'Торги закрыты — рыночные заявки недоступны вне сессии' };
+    return { ok: false, error: 'Рынок закрыт — рыночные заявки недоступны вне сессии' };
+  }
+
+  const needsPrice = type === 'Лимитная' || type === 'Стоп-лимит';
+  if (needsPrice) {
+    if (!(price > 0)) {
+      return { ok: false, error: 'Неверная цена заявки' };
+    }
+    if (minStep) {
+      const steps = price / minStep;
+      if (Math.abs(Math.round(steps) - steps) > 1e-6) {
+        return { ok: false, error: 'Неверный шаг цены' };
+      }
+    }
+    if (lastPrice > 0) {
+      const band = lastPrice * (PRICE_BAND_PCT / 100);
+      if (price < lastPrice - band || price > lastPrice + band) {
+        return { ok: false, error: 'Цена вне коридора допустимых значений' };
+      }
+    }
   }
 
   // Demo guardrails: can't sell more than you hold, can't spend more cash than you have.
   if (side === 'Продать') {
     const held = s.positions[symbol]?.qty || 0;
+    if (held <= 0) return { ok: false, error: 'Нет бумаг для продажи' };
     qty = Math.min(qty, held);
-    if (qty <= 0) return { ok: false, error: 'Нет позиции для продажи' };
   } else if (type === 'Рыночная' || type === 'Лимитная') {
     const refPrice = type === 'Рыночная' ? lastPrice : price;
     const cost = orderNotional({ isBond, price: refPrice, qty, lotSize, faceValue, accruedInterest }) * (1 + COMMISSION_RATE);
