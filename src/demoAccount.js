@@ -1,4 +1,5 @@
 import React from 'react';
+import { isMarketOpen } from './marketHours.js';
 
 // A local, per-browser demo trading account. No real orders ever reach any
 // exchange — this only exists so the "buy/sell" UI has something honest to
@@ -6,7 +7,25 @@ import React from 'react';
 // instead of a button that does nothing.
 
 const KEY = 'tf2_demo_account_v2';
-const COMMISSION_RATE = 0.0005; // 0.05% — a representative retail rate, not a real broker's
+// Not an exchange fee — a stand-in for a broker's own commission, since MOEX
+// itself doesn't charge retail traders directly. Surfaced in the UI as a
+// demo broker rate, never as "the" official rate.
+const COMMISSION_RATE = 0.0005;
+
+// A bond quotes as a % of face value plus accrued coupon interest (НКД), not
+// as a per-share ruble price — a share/fund's `price` already *is* the per-unit
+// ruble cost. `lotSize` always applies: MOEX quotes/trades in whole lots, not
+// individual units, for either kind of instrument.
+export function unitCost({ isBond, price, faceValue }) {
+  return isBond ? (price / 100) * (faceValue || 0) : price;
+}
+
+export function orderNotional({ isBond, price, qty, lotSize, faceValue, accruedInterest }) {
+  const units = qty * (lotSize || 1);
+  const base = unitCost({ isBond, price, faceValue }) * units;
+  const nkd = isBond ? (accruedInterest || 0) * units : 0;
+  return base + nkd;
+}
 
 const DEFAULT_STATE = {
   cash: 1_000_000,
@@ -43,20 +62,21 @@ function getSnapshot() {
   return state;
 }
 
-function applyFill(s, { symbol, market, board, name, side, qty, price, type }) {
-  const commission = qty * price * COMMISSION_RATE;
-  const signedQty = side === 'Купить' ? qty : -qty;
-  const pos = s.positions[symbol] || { qty: 0, avgPrice: 0, market, board, name };
+function applyFill(s, { symbol, market, board, name, side, qty, price, type, lotSize, isBond, faceValue, accruedInterest }) {
+  lotSize = lotSize || 1;
+  const notional = orderNotional({ isBond, price, qty, lotSize, faceValue, accruedInterest });
+  const commission = notional * COMMISSION_RATE;
+  const pos = s.positions[symbol] || { qty: 0, avgPrice: 0, market, board, name, lotSize, isBond, faceValue };
   let nextPos;
   if (side === 'Купить') {
     const newQty = pos.qty + qty;
     const newAvg = pos.qty > 0 ? (pos.qty * pos.avgPrice + qty * price) / newQty : price;
-    nextPos = { ...pos, qty: newQty, avgPrice: newAvg, market, board, name };
+    nextPos = { ...pos, qty: newQty, avgPrice: newAvg, market, board, name, lotSize, isBond, faceValue };
   } else {
     const newQty = Math.max(0, pos.qty - qty);
-    nextPos = { ...pos, qty: newQty, avgPrice: newQty > 0 ? pos.avgPrice : 0, market, board, name };
+    nextPos = { ...pos, qty: newQty, avgPrice: newQty > 0 ? pos.avgPrice : 0, market, board, name, lotSize, isBond, faceValue };
   }
-  const cashDelta = side === 'Купить' ? -(qty * price + commission) : qty * price - commission;
+  const cashDelta = side === 'Купить' ? -(notional + commission) : notional - commission;
   const positions = { ...s.positions };
   if (nextPos.qty > 0) positions[symbol] = nextPos;
   else delete positions[symbol];
@@ -70,10 +90,20 @@ function applyFill(s, { symbol, market, board, name, side, qty, price, type }) {
   };
 }
 
-/** Places an order. Market fills immediately; Limit/Stop-* queue until checkPendingOrders triggers them. */
-export function placeOrder({ symbol, market, board, name, side, type, qty, price, stopPrice, lastPrice }) {
+/** Places an order. Market fills immediately; Limit/Stop-* queue until checkPendingOrders triggers them.
+ * `lotSize`/`isBond`/`faceValue`/`accruedInterest` all come from the instrument's own MOEX ISS data —
+ * pass whatever the caller has fetched, never hardcoded here. */
+export function placeOrder({ symbol, market, board, name, side, type, qty, price, stopPrice, lastPrice, lotSize, isBond, faceValue, accruedInterest }) {
   qty = Math.max(1, Math.floor(qty) || 0);
+  lotSize = lotSize || 1;
   const s = state;
+
+  // MOEX only continuously matches during the trading session — a market
+  // order has nothing to match against once it's closed. A limit order can
+  // still be queued to wait for the next session, same as a real broker.
+  if (type === 'Рыночная' && !isMarketOpen()) {
+    return { ok: false, error: 'Торги закрыты — рыночные заявки недоступны вне сессии' };
+  }
 
   // Demo guardrails: can't sell more than you hold, can't spend more cash than you have.
   if (side === 'Продать') {
@@ -82,18 +112,18 @@ export function placeOrder({ symbol, market, board, name, side, type, qty, price
     if (qty <= 0) return { ok: false, error: 'Нет позиции для продажи' };
   } else if (type === 'Рыночная' || type === 'Лимитная') {
     const refPrice = type === 'Рыночная' ? lastPrice : price;
-    const cost = qty * refPrice * (1 + COMMISSION_RATE);
+    const cost = orderNotional({ isBond, price: refPrice, qty, lotSize, faceValue, accruedInterest }) * (1 + COMMISSION_RATE);
     if (cost > s.cash) return { ok: false, error: 'Недостаточно средств' };
   }
 
   if (type === 'Рыночная') {
-    set(applyFill(state, { symbol, market, board, name, side, qty, price: lastPrice, type }));
+    set(applyFill(state, { symbol, market, board, name, side, qty, price: lastPrice, type, lotSize, isBond, faceValue, accruedInterest }));
     return { ok: true, filled: true };
   }
 
   const order = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    symbol, market, board, name, side, type, qty,
+    symbol, market, board, name, side, type, qty, lotSize, isBond, faceValue, accruedInterest,
     price: type === 'Лимитная' || type === 'Стоп-лимит' ? Number(price) : null,
     stopPrice: type === 'Стоп-лимит' || type === 'Стоп-маркет' ? Number(stopPrice) : null,
     createdAt: new Date().toISOString(),
@@ -133,8 +163,11 @@ export function checkPendingOrders(symbol, lastPrice) {
       fillPrice = o.price;
     }
 
-    if (trigger) {
-      s = applyFill(s, { symbol: o.symbol, market: o.market, board: o.board, name: o.name, side: o.side, qty: o.qty, price: fillPrice, type: o.type });
+    if (trigger && isMarketOpen()) {
+      s = applyFill(s, {
+        symbol: o.symbol, market: o.market, board: o.board, name: o.name, side: o.side, qty: o.qty, price: fillPrice, type: o.type,
+        lotSize: o.lotSize, isBond: o.isBond, faceValue: o.faceValue, accruedInterest: o.accruedInterest,
+      });
     } else {
       remaining.push(o);
     }

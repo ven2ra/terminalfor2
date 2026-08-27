@@ -17,9 +17,9 @@ import { PriceChart } from '../PriceChart.jsx';
 import { fetchSecurities, fetchInstrument, fetchCandles, fetchOrderBook, fetchBondEvents, fetchKeyRate } from '../api.js';
 import { Icon } from '../../components/core/Icon.jsx';
 import { FreeCanvas, useBlockLayout, useWidgetVisibility } from '../DraggableBlocks.jsx';
-import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate } from '../demoAccount.js';
+import { useDemoAccount, placeOrder, cancelOrder, checkPendingOrders, commissionRate, orderNotional, unitCost } from '../demoAccount.js';
 import { useTheme, toggleTheme } from '../theme.js';
-import { useMarketOpen, marketScheduleLabel } from '../marketHours.js';
+import { useMarketOpen, marketScheduleLabel, useSessionPhase, SESSION_PHASE_LABELS } from '../marketHours.js';
 
 const ORDER_TYPES = ['Рыночная', 'Лимитная', 'Стоп-лимит', 'Стоп-маркет'];
 const TIMEFRAMES = [
@@ -28,9 +28,9 @@ const TIMEFRAMES = [
 ];
 
 const WORKSPACE_KEY = 'tf2_dash_workspace_v4';
-const WIDGET_IDS = ['watchlist', 'chart', 'order', 'portfolio', 'orderbook', 'bondEvents', 'margin'];
+const WIDGET_IDS = ['watchlist', 'chart', 'order', 'activeOrders', 'portfolio', 'orderbook', 'bondEvents', 'margin'];
 const WIDGET_LABELS = {
-  watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', portfolio: 'Портфель',
+  watchlist: 'Инструменты', chart: 'График', order: 'Новая заявка', activeOrders: 'Активные заявки', portfolio: 'Портфель',
   orderbook: 'Стакан заявок', bondEvents: 'Оферты и купоны', margin: 'Маржинальная торговля',
 };
 // { xPct, y, wPct, h } — x/width as a % of the canvas, y/height in px.
@@ -38,10 +38,11 @@ const DEFAULT_LAYOUT = {
   watchlist: { xPct: 0, y: 0, wPct: 21, h: 700 },
   chart: { xPct: 22, y: 0, wPct: 44, h: 460 },
   order: { xPct: 67, y: 0, wPct: 32, h: 460 },
+  activeOrders: { xPct: 67, y: 480, wPct: 32, h: 260 },
   portfolio: { xPct: 22, y: 480, wPct: 44, h: 300 },
-  orderbook: { xPct: 67, y: 480, wPct: 32, h: 420 },
+  orderbook: { xPct: 67, y: 760, wPct: 32, h: 420 },
   bondEvents: { xPct: 22, y: 800, wPct: 44, h: 320 },
-  margin: { xPct: 67, y: 920, wPct: 32, h: 280 },
+  margin: { xPct: 67, y: 1200, wPct: 32, h: 280 },
 };
 
 // A negative cash balance means the account borrowed to buy — the margin
@@ -107,6 +108,7 @@ export function Dashboard() {
   const account = useDemoAccount();
   const theme = useTheme();
   const marketOpen = useMarketOpen();
+  const sessionPhase = useSessionPhase();
 
   const [watchlist, setWatchlist] = React.useState([]);
   const [watchlistError, setWatchlistError] = React.useState(null);
@@ -271,19 +273,24 @@ export function Dashboard() {
     return () => clearInterval(id);
   }, [loadAll, marketOpen]);
 
-  const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: priceUnit(r.market) }));
+  const ticker = watchlist.slice(0, 10).map(r => ({ symbol: r.symbol, price: r.price, quote: r.market === 'bonds' ? '%' : null }));
   const selectInstrument = r => setActive({ symbol: r.symbol, market: r.market, board: r.board, name: r.name });
 
   const lotSize = info?.lotSize || 1;
+  const minStep = info?.minStep || 0;
+  const isBondActive = active?.market === 'bonds';
+  const faceValue = info?.faceValue || 0;
+  const accruedInterest = info?.accruedInterest || 0;
   const isMarket = orderType === 'Рыночная';
   const needsStop = orderType === 'Стоп-лимит' || orderType === 'Стоп-маркет';
   const effectivePrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || 0;
   const qtyNum = Number(qty) || 0;
-  const notional = effectivePrice * qtyNum * lotSize;
+  const notional = orderNotional({ isBond: isBondActive, price: effectivePrice, qty: qtyNum, lotSize, faceValue, accruedInterest });
+  const nkdAmount = isBondActive ? accruedInterest * qtyNum * lotSize : 0;
   const commission = notional * commissionRate();
   const totalCost = notional + commission;
   const position = active && account.positions[active.symbol];
-  const fillPriceFromBook = p => setPrice(String(p));
+  const fillPriceFromBook = p => { setOrderType('Лимитная'); setPrice(String(p)); };
 
   const setQtyFromPercent = pct => {
     if (side === 'Продать') {
@@ -294,14 +301,25 @@ export function Dashboard() {
     const refPrice = isMarket ? activeQuote?.priceRaw || 0 : Number(price) || activeQuote?.priceRaw || 0;
     if (!refPrice) return;
     const budget = (account.cash * pct) / 100;
-    setQty(String(Math.max(1, Math.floor(budget / (refPrice * lotSize)))));
+    const perLot = unitCost({ isBond: isBondActive, price: refPrice, faceValue }) * lotSize + (isBondActive ? accruedInterest * lotSize : 0);
+    if (!perLot) return;
+    setQty(String(Math.max(1, Math.floor(budget / perLot))));
+  };
+
+  // MOEX quotes in discrete price-tick increments (MINSTEP) — round whatever
+  // the user typed to the nearest tick before it can reach the order.
+  const roundToTick = v => {
+    if (!minStep) return v;
+    return Math.round(v / minStep) * minStep;
   };
 
   const submitOrder = () => {
     if (!active) return;
+    const limitPrice = roundToTick(Number(price) || 0);
     const result = placeOrder({
       symbol: active.symbol, market: active.market, board: active.board, name: activeQuote?.name || info?.name || active.name,
-      side, type: orderType, qty: qtyNum, price: Number(price) || 0, stopPrice: Number(stopPrice) || 0, lastPrice: activeQuote?.priceRaw || 0,
+      side, type: orderType, qty: qtyNum, price: limitPrice, stopPrice: Number(stopPrice) || 0, lastPrice: activeQuote?.priceRaw || 0,
+      lotSize, isBond: isBondActive, faceValue, accruedInterest,
     });
     setSubmitted({ ...result, side, type: orderType, qty: qtyNum, at: new Date() });
   };
@@ -338,7 +356,7 @@ export function Dashboard() {
             <tr>
               <th style={bookTh}>Инструмент</th>
               <th style={{ ...bookTh, textAlign: 'right' }}>Оборот</th>
-              <th style={{ ...bookTh, textAlign: 'right' }}>Цена, {priceUnit(assetClass)}</th>
+              <th style={{ ...bookTh, textAlign: 'right' }}>Цена</th>
               <th style={{ ...bookTh, textAlign: 'right' }}>Изм. %</th>
             </tr>
           </thead>
@@ -360,7 +378,7 @@ export function Dashboard() {
                     </span>
                   </td>
                   <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-faint)' }}>{r.marketCap}</td>
-                  <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>{r.price}</td>
+                  <td style={{ ...bookTd, textAlign: 'right', color: 'var(--text-primary)' }}>{r.price} {priceUnit(r.market)}</td>
                   <td style={{ ...bookTd, textAlign: 'right' }}><DeltaChip value={r.deltaRaw} size="sm" /></td>
                 </tr>
               );
@@ -389,7 +407,7 @@ export function Dashboard() {
               <PriceValue value={activeQuote?.priceRaw} currency="" suffix={priceUnit(active?.market)} size="lg" />
             </span>
             {activeQuote && <DeltaChip value={activeQuote.deltaRaw} showIcon />}
-            {!marketOpen && <Badge tone="neutral">Торги закрыты</Badge>}
+            <Badge tone={marketOpen ? 'positive' : 'neutral'}>{SESSION_PHASE_LABELS[sessionPhase]}</Badge>
           </div>
         </div>
         <FilterTabs options={TIMEFRAMES.map(t => t.label)} value={TIMEFRAMES.find(t => t.code === tf)?.label} onChange={label => setTf(TIMEFRAMES.find(t => t.label === label).code)} />
@@ -412,14 +430,23 @@ export function Dashboard() {
       const pos = account.positions[sym];
       const q = getQuote(sym);
       const last = q?.priceRaw ?? pos.avgPrice;
-      const value = last * pos.qty;
-      const pnl = (last - pos.avgPrice) * pos.qty;
-      const pnlPct = pos.avgPrice ? ((last - pos.avgPrice) / pos.avgPrice) * 100 : 0;
-      return { sym, pos, last, value, pnl, pnlPct };
+      const lot = pos.lotSize || 1;
+      const units = pos.qty * lot;
+      // A bond position's real ruble value is % of face value × units, plus
+      // whatever accrued coupon interest (НКД) has built up since the last
+      // coupon — shown separately, since it isn't part of the bond's own
+      // market-price P&L.
+      const unitValue = pos.isBond ? (last / 100) * (pos.faceValue || 0) : last;
+      const avgUnitValue = pos.isBond ? (pos.avgPrice / 100) * (pos.faceValue || 0) : pos.avgPrice;
+      const nkd = pos.isBond ? (q?.accruedInterest || 0) * units : 0;
+      const value = unitValue * units;
+      const pnl = (unitValue - avgUnitValue) * units;
+      const pnlPct = avgUnitValue ? ((unitValue - avgUnitValue) / avgUnitValue) * 100 : 0;
+      return { sym, pos, last, value, pnl, pnlPct, nkd };
     });
-    const totalValue = account.cash + priced.reduce((s, p) => s + p.value, 0);
+    const totalValue = account.cash + priced.reduce((s, p) => s + p.value + p.nkd, 0);
     const totalPnl = priced.reduce((s, p) => s + p.pnl, 0);
-    const costBasis = priced.reduce((s, p) => s + p.pos.avgPrice * p.pos.qty, 0);
+    const costBasis = priced.reduce((s, p) => s + (p.pos.isBond ? (p.pos.avgPrice / 100) * (p.pos.faceValue || 0) : p.pos.avgPrice) * p.pos.qty * (p.pos.lotSize || 1), 0);
     const totalPnlPct = costBasis ? (totalPnl / costBasis) * 100 : 0;
 
     return (
@@ -449,10 +476,11 @@ export function Dashboard() {
               <CoinMark symbol={p.sym} size={18} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ font: 'var(--type-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{p.sym}</div>
-                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>{p.pos.qty} шт · сред. {fmtRub(p.pos.avgPrice)} ₽</div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>{p.pos.qty} лот · сред. {fmtRub(p.pos.avgPrice)} {priceUnit(p.pos.market)}</div>
+                {p.pos.isBond && <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>НКД: {fmtRub(p.nkd)} ₽</div>}
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ font: 'var(--type-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{fmtRub(p.value, { maximumFractionDigits: 0 })} ₽</div>
+                <div style={{ font: 'var(--type-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{fmtRub(p.value + p.nkd, { maximumFractionDigits: 0 })} ₽</div>
                 <DeltaChip value={p.pnlPct} size="sm" />
               </div>
             </div>
@@ -472,21 +500,32 @@ export function Dashboard() {
           <SegmentedControl options={['Купить', 'Продать']} value={side} onChange={setSide} />
           <SelectMenu options={ORDER_TYPES} value={orderType} onChange={setOrderType} />
           {!isMarket && (
-            <AmountField label={needsStop ? `Цена исполнения, ${priceUnit(active.market)}` : `Цена, ${priceUnit(active.market)}`} value={price} onChange={e => setPrice(e.target.value)} currency={priceUnit(active.market)} />
+            <div>
+              <AmountField label={needsStop ? `Цена исполнения, ${priceUnit(active.market)}` : `Цена, ${priceUnit(active.market)}`} value={price} onChange={e => setPrice(e.target.value)} currency={priceUnit(active.market)} />
+              {minStep > 0 && <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>Шаг цены: {minStep}</span>}
+            </div>
           )}
           {needsStop && <AmountField label={`Стоп-цена, ${priceUnit(active.market)}`} value={stopPrice} onChange={e => setStopPrice(e.target.value)} currency={priceUnit(active.market)} />}
-          <AmountField label="Количество" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
+          <AmountField label="Количество, лоты" value={qty} onChange={e => setQty(e.target.value)} currency={`лот ${lotSize}`} />
           <div style={{ display: 'flex', gap: 'var(--sp-3)', flexWrap: 'wrap' }}>
             {[10, 25, 50, 100].map(pct => (
               <Button key={pct} variant="secondary" size="sm" style={{ flex: '1 1 60px' }} onClick={() => setQtyFromPercent(pct)}>{pct}%</Button>
             ))}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', padding: 'var(--sp-5)', background: 'var(--surface-inset)', borderRadius: 'var(--r-lg)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Сумма</span><span>{fmtRub(notional)} ₽</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Комиссия ({(commissionRate() * 100).toFixed(2)}%)</span><span>{fmtRub(commission)} ₽</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Сумма</span><span>{fmtRub(notional - nkdAmount)} ₽</span></div>
+            {isBondActive && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>НКД</span><span>{fmtRub(nkdAmount)} ₽</span></div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-body-sm)', color: 'var(--text-muted)' }}><span>Комиссия демо-брокера ({(commissionRate() * 100).toFixed(2)}%, не биржевой сбор)</span><span>{fmtRub(commission)} ₽</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 4, font: 'var(--type-numeric-strong)', color: 'var(--text-primary)', paddingTop: 4, borderTop: '1px solid var(--border-hairline)' }}><span>Итого</span><span>{fmtRub(totalCost)} ₽</span></div>
           </div>
-          <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth onClick={submitOrder}>{side} {active.symbol}</Button>
+          {!marketOpen && (
+            <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)' }}>
+              Торги закрыты — заявки недоступны вне сессии {marketScheduleLabel()}
+            </span>
+          )}
+          <Button variant={side === 'Купить' ? 'primary' : 'danger'} size="lg" fullWidth disabled={!marketOpen} onClick={submitOrder}>{side} {active.symbol}</Button>
           {submitted && (
             <span style={{ font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: submitted.ok ? 'var(--text-faint)' : 'var(--negative)' }}>
               {submitted.ok
@@ -501,6 +540,11 @@ export function Dashboard() {
     </Card>
   );
 
+  const bestBid = book.bids[0]?.price;
+  const bestAsk = book.asks[0]?.price;
+  const spread = bestBid != null && bestAsk != null ? bestAsk - bestBid : null;
+  const spreadPct = spread != null && bestBid ? (spread / bestBid) * 100 : null;
+
   const orderbookCard = (
     <Card style={{ height: '100%', overflow: 'auto' }}>
       <SectionHeader
@@ -513,8 +557,20 @@ export function Dashboard() {
             : book.source === 'tinvest' ? 'Реальный стакан · Т-Инвестиции' : 'Смоделировано · демо'
         }
         actions={!marketOpen && <Badge tone="neutral">Закрыто</Badge>}
-        style={{ paddingBottom: 'var(--sp-5)' }}
+        style={{ paddingBottom: 'var(--sp-4)' }}
       />
+      {spread != null && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-3) var(--sp-4)',
+          marginBottom: 'var(--sp-4)', background: 'var(--surface-inset)', borderRadius: 'var(--r-md)',
+          font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
+        }}>
+          <span>Спред</span>
+          <span style={{ color: 'var(--text-primary)', fontWeight: 'var(--fw-semibold)' }}>
+            {fmtRub(spread)} {priceUnit(active?.market)} ({spreadPct != null ? spreadPct.toFixed(2) : '—'}%)
+          </span>
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--sp-5)' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={bookTh}>Покупка, {priceUnit(active?.market)}</th><th style={{ ...bookTh, textAlign: 'right' }}>Лоты</th></tr></thead>
@@ -645,7 +701,30 @@ export function Dashboard() {
     </Card>
   );
 
-  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard, margin: marginCard };
+  const activeOrdersCard = (
+    <Card style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', overflow: 'auto' }}>
+      <SectionHeader title="Активные заявки" size="sm" eyebrow={`${account.orders.length} в очереди`} />
+      {!account.orders.length ? (
+        <span style={{ font: 'var(--type-body-sm)', color: 'var(--text-faint)' }}>Нет активных заявок</span>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
+          {account.orders.map(o => (
+            <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', padding: 'var(--sp-3) 0', borderTop: '1px solid var(--border-hairline)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ font: 'var(--type-body-sm)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{o.side} {o.symbol} · {o.type}</div>
+                <div style={{ font: 'var(--type-eyebrow)', color: 'var(--text-faint)' }}>
+                  {o.qty} лот{o.price != null ? ` · ${o.price} ${priceUnit(o.market)}` : ''}{o.stopPrice != null ? ` · стоп ${o.stopPrice}` : ''}
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" icon="x" onClick={() => cancelOrder(o.id)}>Отменить</Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+
+  const blocks = { watchlist: watchlistCard, chart: chartCard, order: orderCard, activeOrders: activeOrdersCard, portfolio: portfolioContent, orderbook: orderbookCard, bondEvents: bondEventsCard, margin: marginCard };
 
   return (
     <div style={{ background: 'var(--bg-app)' }}>
@@ -668,7 +747,7 @@ export function Dashboard() {
               font: 'var(--type-label)', fontSize: 'var(--fs-tiny)', color: 'var(--text-faint)',
             }}>
               <Icon name="moon" size={12} />
-              Торги закрыты · биржа работает {marketScheduleLabel()} · котировки и стакан заморожены на последних значениях
+              {SESSION_PHASE_LABELS[sessionPhase]} · биржа работает {marketScheduleLabel()} · котировки и стакан заморожены на последних значениях
             </div>
           )}
         </div>

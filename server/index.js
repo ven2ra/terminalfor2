@@ -65,6 +65,20 @@ function rowsFromBlock(block) {
 
 const DEFAULT_BOARD = { shares: 'TQBR', bonds: 'TQOB' };
 
+// MOEX's own market split is coarser than "shares vs bonds": equity ETFs/BPIFs
+// (INSTRID=IFTF) trade on the *shares* market/board right alongside common
+// stock, and so do BPIFs that actually hold bonds — MOEX doesn't expose a
+// separate machine-readable "this fund invests in bonds" flag, so that one
+// distinction falls back to matching the fund's own name (every bond BPIF on
+// MOEX spells out "облигации" or "обл" in its name; a false negative here
+// would just leave a bond fund classified as an equity fund, not a bond).
+function classifyKind(market, secname, instrid) {
+  if (market === 'bonds') return 'bond';
+  const isFund = instrid === 'IFTF' || /БПИФ|ETF|фонд/i.test(secname || '');
+  if (!isFund) return 'share';
+  return /облига|обл\.|bond/i.test(secname || '') ? 'bond-fund' : 'equity-fund';
+}
+
 async function loadSecurities(market, board) {
   const url = `${ISS_BASE}/engines/stock/markets/${market}/boards/${board}/securities.json?iss.meta=off&iss.only=securities,marketdata`;
   const json = await fetchJson(url);
@@ -79,11 +93,17 @@ async function loadSecurities(market, board) {
       const prevPrice = s.PREVPRICE ?? null;
       const change = price != null && prevPrice ? ((price - prevPrice) / prevPrice) * 100 : null;
       const volume = Number(md.VALTODAY || 0);
+      const name = s.SECNAME || s.SHORTNAME || s.SECID;
       return {
         symbol: s.SECID,
-        name: s.SECNAME || s.SHORTNAME || s.SECID,
+        name,
         market,
         board,
+        kind: classifyKind(market, name, s.INSTRID),
+        lotSize: Number(s.LOTSIZE || 1),
+        minStep: s.MINSTEP != null ? Number(s.MINSTEP) : null,
+        faceValue: s.FACEVALUE != null ? Number(s.FACEVALUE) : null,
+        accruedInterest: s.ACCRUEDINT != null ? Number(s.ACCRUEDINT) : 0,
         priceRaw: price != null ? Number(price) : null,
         deltaRaw: change != null ? Number(change.toFixed(2)) : 0,
         price: price != null ? Number(price).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) : '—',
@@ -110,15 +130,20 @@ async function loadOneSecurity(market, board, symbol) {
   const change = price != null && prevPrice ? ((price - prevPrice) / prevPrice) * 100 : null;
   const open = md.OPEN ?? null;
   const changeFromOpen = price != null && open ? ((price - open) / open) * 100 : null;
+  const name = s.SECNAME || s.SHORTNAME || s.SECID;
   return {
     symbol: s.SECID,
-    name: s.SECNAME || s.SHORTNAME || s.SECID,
+    name,
     market,
     board,
+    kind: classifyKind(market, name, s.INSTRID),
     priceRaw: price != null ? Number(price) : null,
     deltaRaw: change != null ? Number(change.toFixed(2)) : 0,
     volumeRaw: Number(md.VALTODAY || 0),
     lotSize: Number(s.LOTSIZE || 1),
+    minStep: s.MINSTEP != null ? Number(s.MINSTEP) : null,
+    faceValue: s.FACEVALUE != null ? Number(s.FACEVALUE) : null,
+    accruedInterest: s.ACCRUEDINT != null ? Number(s.ACCRUEDINT) : 0,
     bid: md.BID != null ? Number(md.BID) : null,
     offer: md.OFFER != null ? Number(md.OFFER) : null,
     spread: md.SPREAD != null ? Number(md.SPREAD) : null,
@@ -326,11 +351,30 @@ app.get('/api/market-status', (req, res) => {
   res.json({ open: isMarketOpen() });
 });
 
+// "shares" and "bonds" here name an asset *class* for the instrument list,
+// not a raw MOEX market — equity ETFs/BPIFs trade on the shares market and
+// belong with shares; BPIFs that hold bonds also trade on the shares market
+// but belong with bonds, not mixed in with equities. So the bonds class
+// merges the real bonds market with the shares market's bond-fund rows.
 app.get('/api/securities', async (req, res) => {
-  const market = (req.query.market || 'shares').toString();
-  const board = (req.query.board || DEFAULT_BOARD[market] || 'TQBR').toString().toUpperCase();
+  const assetClass = (req.query.market || 'shares').toString();
   try {
-    const rows = (await loadSecurities(market, board)).slice(0, 30).map(({ _volRub, ...r }) => r);
+    if (assetClass === 'bonds') {
+      const [bonds, shares] = await Promise.all([
+        loadSecurities('bonds', DEFAULT_BOARD.bonds),
+        loadSecurities('shares', DEFAULT_BOARD.shares),
+      ]);
+      const rows = [...bonds, ...shares.filter(r => r.kind === 'bond-fund')]
+        .sort((a, b) => b._volRub - a._volRub)
+        .slice(0, 30)
+        .map(({ _volRub, ...r }) => r);
+      return res.json(rows);
+    }
+    const board = (req.query.board || DEFAULT_BOARD.shares).toString().toUpperCase();
+    const rows = (await loadSecurities('shares', board))
+      .filter(r => r.kind === 'share' || r.kind === 'equity-fund')
+      .slice(0, 30)
+      .map(({ _volRub, ...r }) => r);
     res.json(rows);
   } catch (e) {
     res.status(502).json({ error: e.message });

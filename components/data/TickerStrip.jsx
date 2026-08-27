@@ -11,7 +11,7 @@ export function TickerStrip({ items = [], style, ...rest }) {
           <span style={{ font: 'var(--type-numeric-strong)', color: 'var(--text-body)' }}>{it.price}</span>
           <CoinMark symbol={it.symbol} size={14} />
           <span style={{ font: 'var(--type-label)', fontWeight: 'var(--fw-semibold)', color: 'var(--text-primary)' }}>{it.symbol.toUpperCase()}</span>
-          <span style={{ font: 'var(--type-label)', color: 'var(--text-faint)' }}>/{it.quote || 'USDT'}</span>
+          {it.quote && <span style={{ font: 'var(--type-label)', color: 'var(--text-faint)' }}>{it.quote}</span>}
         </span>
       ))}
     </div>
